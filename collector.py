@@ -591,25 +591,39 @@ def main():
     # Stage 2: Read Existing Proxies and Run High-Concurrency Validation
     # --------------------------------------------------------------------------
     if ENABLE_VALIDATION:
-        if not os.path.exists(OUTPUT_FILE):
-            print(f"[-] Input file {OUTPUT_FILE} not found. Please ensure proxies exist.")
-            return
-
-        with open(OUTPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            raw_lines = [line.strip() for line in f if line.strip()]
-
         unique_nodes = []
         node_seen = set()
-        for line in raw_lines:
-            if line not in node_seen and parse_proxy(line) is not None:
-                node_seen.add(line)
-                unique_nodes.append(line)
+
+        if os.path.exists(OUTPUT_FILE):
+            with open(OUTPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                raw_lines = [line.strip() for line in f if line.strip()]
+            for line in raw_lines:
+                if line not in node_seen and parse_proxy(line) is not None:
+                    node_seen.add(line)
+                    unique_nodes.append(line)
+
+        # Smart Fallback: If all_proxies.txt in current branch is empty, pull the 41,941 historical collected proxies!
+        if not unique_nodes:
+            print(f"[*] {OUTPUT_FILE} is currently empty. Fetching previously collected 41,941 nodes from repository history...")
+            try:
+                backup_url = "https://raw.githubusercontent.com/luyuandong6b/tizi1/c8e7abe/all_proxies.txt"
+                req = urllib.request.Request(backup_url, headers={"User-Agent": "proxy-auto-collector"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    content = resp.read().decode("utf-8", errors="ignore")
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if line and line not in node_seen and parse_proxy(line) is not None:
+                            node_seen.add(line)
+                            unique_nodes.append(line)
+                print(f"[+] Successfully fetched {len(unique_nodes)} candidate nodes from history!")
+            except Exception as e:
+                print(f"[-] Failed to fetch historical proxies: {e}")
 
         if not unique_nodes:
             print(f"[-] No valid proxy URLs found in {OUTPUT_FILE} (file may be empty).")
             return
 
-        print(f"[+] Loaded {len(unique_nodes)} unique candidate nodes from {OUTPUT_FILE}")
+        print(f"[+] Ready to test {len(unique_nodes)} unique candidate nodes")
 
         # Run concurrent async validation
         alive_results = asyncio.run(
@@ -620,12 +634,12 @@ def main():
             )
         )
 
-        # Write alive proxies to valid_proxies.txt
+        # Write alive proxies to independent file: valid_proxies.txt
         with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
             for item in alive_results:
                 vf.write(item[0] + "
 ")
-        print(f"[+] Saved {len(alive_results)} alive proxies to: {VALID_OUTPUT_FILE}")
+        print(f"[+] Saved {len(alive_results)} alive proxies to independent file: {VALID_OUTPUT_FILE}")
 
         # Synchronize back to all_proxies.txt
         if SYNC_TO_ALL_PROXIES:
