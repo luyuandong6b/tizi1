@@ -364,27 +364,22 @@ def write_unique_lines(text, out_f, seen_f, seen_set, output_bytes):
             dup_count += 1
             continue
 
-        encoded = (line + "
-").encode("utf-8")
+        encoded = (line + "\n").encode("utf-8")
         if output_bytes + len(encoded) > MAX_OUTPUT_BYTES:
             size_skip_count += 1
             continue
 
-        out_f.write(line + "
-")
-        seen_f.write(h + "
-")
+        out_f.write(line + "\n")
+        seen_f.write(h + "\n")
         seen_set.add(h)
         output_bytes += len(encoded)
         new_count += 1
         wrote_any = True
 
     if wrote_any:
-        blank = "
-".encode("utf-8")
+        blank = "\n".encode("utf-8")
         if output_bytes + len(blank) <= MAX_OUTPUT_BYTES:
-            out_f.write("
-")
+            out_f.write("\n")
             output_bytes += len(blank)
 
     out_f.flush()
@@ -487,8 +482,7 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float):
 async def run_batch_validation(proxies, concurrency=250, timeout=2.5):
     """Validate list of proxy strings concurrently using asyncio."""
     total = len(proxies)
-    print(f"
-[+] Starting High-Concurrency Validation: Total={total} | Concurrency={concurrency} | Timeout={timeout}s")
+    print(f"\n[+] Starting High-Concurrency Validation: Total={total} | Concurrency={concurrency} | Timeout={timeout}s")
 
     sem = asyncio.Semaphore(concurrency)
     tasks = [asyncio.create_task(check_single_proxy(sem, p, timeout)) for p in proxies]
@@ -637,16 +631,14 @@ def main():
         # Write alive proxies to independent file: valid_proxies.txt
         with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
             for item in alive_results:
-                vf.write(item[0] + "
-")
+                vf.write(item[0] + "\n")
         print(f"[+] Saved {len(alive_results)} alive proxies to independent file: {VALID_OUTPUT_FILE}")
 
         # Synchronize back to all_proxies.txt
         if SYNC_TO_ALL_PROXIES:
             with open(OUTPUT_FILE, "w", encoding="utf-8") as of:
                 for item in alive_results:
-                    of.write(item[0] + "
-")
+                    of.write(item[0] + "\n")
             print(f"[+] Synchronized {len(alive_results)} alive proxies to: {OUTPUT_FILE}")
 
 
