@@ -15,28 +15,33 @@ import urllib.parse
 import urllib.request
 
 # ==============================================================================
-# 銆愯繍琛屾帶鍒跺紑鍏炽€?# ==============================================================================
-# 鏄惁浠庡叾浠?GitHub 浠撳簱鎷夊彇鏂拌妭鐐癸細
-# True  = 鎵ц鍘熺増閲囬泦閫昏緫锛堟姄鍙栧閮?13 涓」鐩級
-# False = 銆愬綋鍓嶆ā寮忋€戣烦杩囧閮ㄦ姄鍙栵紝鐩存帴瀵逛粨搴撳唴宸茬粡鏀堕泦濂界殑浠ｇ悊杩涜楂樺苟鍙戦獙璇?ENABLE_REMOTE_COLLECT = False
+# [RUN CONFIGURATION & SWITCHES]
+# ==============================================================================
+# ENABLE_REMOTE_COLLECT:
+# True  = Fetch new proxies from 13 external GitHub repos (original behavior)
+# False = [CURRENT MODE] Skip external fetching, directly validate existing proxies
+ENABLE_REMOTE_COLLECT = False
 
-# 鏄惁寮€鍚珮骞跺彂鏈夋晥鎬ч獙璇侊紙娴嬫椿锛夛細
-# True  = 寮€鍚珮骞跺彂娴嬫椿锛屽墧闄ゆ鑺傜偣锛屼粎淇濈暀鍙敤鑺傜偣
-# False = 涓嶆祴娲?ENABLE_VALIDATION = True
+# ENABLE_VALIDATION:
+# True  = Enable high-concurrency TCP handshake validation (filter out dead nodes)
+# False = Disable validation
+ENABLE_VALIDATION = True
 
-# 娴嬫椿骞跺彂鏁帮紙GitHub Actions 鍏嶈垂杩愯鍣ㄦ帹鑽?200 ~ 300锛?CHECK_CONCURRENCY = 250
+# Concurrency level (200 - 300 recommended for GitHub Actions runner)
+CHECK_CONCURRENCY = 250
 
-# 鍗曚釜鑺傜偣杩炴帴瓒呮椂鏃堕棿锛堢锛屽缓璁?2.0 ~ 3.0 绉掞紝瓒呮椂鍗冲垽瀹氫负姝昏妭鐐癸級
+# Connection timeout per node in seconds (2.0 - 3.0s recommended)
 CHECK_TIMEOUT_SECONDS = 2.5
 
-# 杈撳叆涓庤緭鍑烘枃浠堕厤缃?OUTPUT_FILE = "all_proxies.txt"
+# Input and output file paths
+OUTPUT_FILE = "all_proxies.txt"
 VALID_OUTPUT_FILE = "valid_proxies.txt"
 SEEN_FILE = "seen_hashes.txt"
 
-# 鏄惁灏嗘祴娲婚€氳繃鐨勬湁鏁堣妭鐐瑰悓姝ュ洖鍐欏埌 all_proxies.txt
+# Sync validated alive proxies back to all_proxies.txt
 SYNC_TO_ALL_PROXIES = True
 
-# GitHub 鍗曟枃浠剁‖闄愬埗鏄?100MB锛岃繖閲屾帶鍒跺湪 95MB 宸﹀彸锛岄伩鍏?push 澶辫触
+# Maximum output file size (95MB limit to prevent GitHub push errors)
 MAX_OUTPUT_BYTES = 95 * 1024 * 1024
 
 REQUEST_INTERVAL_SECONDS = 2.5
@@ -46,10 +51,11 @@ RETRY_SLEEP_SECONDS = 12
 GITHUB_TOKEN = os.environ.get("GH_PAT", "").strip()
 
 # ==============================================================================
-# 銆愬師鐗堥噰闆嗘暟鎹簮閰嶇疆 - 瀹屾暣淇濈暀锛屾湭鍋氫换浣曞垹闄ゃ€?# ==============================================================================
+# [ORIGINAL REPOSITORIES CONFIGURATION - 100% PRESERVED]
+# ==============================================================================
 PROJECTS = [
     {
-        "name": "椤圭洰1-v2go",
+        "name": "Project1-v2go",
         "owner": "Danialsamadi",
         "repo": "v2go",
         "branch": "main",
@@ -57,7 +63,7 @@ PROJECTS = [
         "recent_hours": None,
     },
     {
-        "name": "椤圭洰2-Proxify",
+        "name": "Project2-Proxify",
         "owner": "Firmfox",
         "repo": "Proxify",
         "branch": "main",
@@ -65,7 +71,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰3-PyroConfig",
+        "name": "Project3-PyroConfig",
         "owner": "0xAbolfazl",
         "repo": "PyroConfig",
         "branch": "main",
@@ -73,7 +79,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰4-ConfigForge-V2Ray",
+        "name": "Project4-ConfigForge-V2Ray",
         "owner": "ShatakVPN",
         "repo": "ConfigForge-V2Ray",
         "branch": "main",
@@ -82,7 +88,7 @@ PROJECTS = [
         "mode": "subdirs_all_txt",
     },
     {
-        "name": "椤圭洰5-v2ray-configs",
+        "name": "Project5-v2ray-configs",
         "owner": "MatinGhanbari",
         "repo": "v2ray-configs",
         "branch": "main",
@@ -92,7 +98,7 @@ PROJECTS = [
         "file_paths": ["subscriptions/v2ray/all_sub.txt"],
     },
     {
-        "name": "椤圭洰6-Freedom-V2Ray",
+        "name": "Project6-Freedom-V2Ray",
         "owner": "MahanKenway",
         "repo": "Freedom-V2Ray",
         "branch": "main",
@@ -100,7 +106,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰7-F0rc3Run",
+        "name": "Project7-F0rc3Run",
         "owner": "F0rc3Run",
         "repo": "F0rc3Run",
         "branch": "main",
@@ -108,7 +114,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰8-SoliSpirit",
+        "name": "Project8-SoliSpirit",
         "owner": "SoliSpirit",
         "repo": "v2ray-configs",
         "branch": "main",
@@ -116,7 +122,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰9-free-v2ray-collector",
+        "name": "Project9-free-v2ray-collector",
         "owner": "iboxz",
         "repo": "free-v2ray-collector",
         "branch": "main",
@@ -124,7 +130,7 @@ PROJECTS = [
         "recent_hours": 12,
     },
     {
-        "name": "椤圭洰10-port-based-v2ray-configs",
+        "name": "Project10-port-based-v2ray-configs",
         "owner": "hamedcode",
         "repo": "port-based-v2ray-configs",
         "branch": "main",
@@ -133,7 +139,7 @@ PROJECTS = [
         "mode": "top_txt_only",
     },
     {
-        "name": "椤圭洰11-5ubscrpt10n",
+        "name": "Project11-5ubscrpt10n",
         "owner": "sevcator",
         "repo": "5ubscrpt10n",
         "branch": "main",
@@ -142,7 +148,7 @@ PROJECTS = [
         "mode": "top_txt_only",
     },
     {
-        "name": "椤圭洰12-Epodonios-Splitted",
+        "name": "Project12-Epodonios-Splitted",
         "owner": "Epodonios",
         "repo": "v2ray-configs",
         "branch": "main",
@@ -151,7 +157,7 @@ PROJECTS = [
         "mode": "top_txt_only",
     },
     {
-        "name": "椤圭洰13-Epodonios-AllConfigsSub",
+        "name": "Project13-Epodonios-AllConfigsSub",
         "owner": "Epodonios",
         "repo": "v2ray-configs",
         "branch": "main",
@@ -164,7 +170,8 @@ PROJECTS = [
 
 
 # ==============================================================================
-# 銆愬師鐗堢綉缁滄媺鍙栧嚱鏁?- 瀹屾暣淇濈暀銆?# ==============================================================================
+# [ORIGINAL FETCHING FUNCTIONS - 100% PRESERVED]
+# ==============================================================================
 def _headers(api=True):
     h = {"User-Agent": "proxy-auto-collector"}
     if api:
@@ -185,7 +192,7 @@ def _request_json(url: str):
         except (urllib.error.HTTPError, urllib.error.URLError) as e:
             last_err = e
             if attempt < MAX_RETRIES:
-                print(f"璇锋眰澶辫触锛寋RETRY_SLEEP_SECONDS}绉掑悗閲嶈瘯({attempt}/{MAX_RETRIES})")
+                print(f"Request failed, retrying in {RETRY_SLEEP_SECONDS}s ({attempt}/{MAX_RETRIES})")
                 time.sleep(RETRY_SLEEP_SECONDS)
                 continue
             raise
@@ -203,7 +210,7 @@ def _request_text(url: str):
         except (urllib.error.HTTPError, urllib.error.URLError) as e:
             last_err = e
             if attempt < MAX_RETRIES:
-                print(f"涓嬭浇澶辫触锛寋RETRY_SLEEP_SECONDS}绉掑悗閲嶈瘯({attempt}/{MAX_RETRIES})")
+                print(f"Download failed, retrying in {RETRY_SLEEP_SECONDS}s ({attempt}/{MAX_RETRIES})")
                 time.sleep(RETRY_SLEEP_SECONDS)
                 continue
             raise
@@ -357,22 +364,27 @@ def write_unique_lines(text, out_f, seen_f, seen_set, output_bytes):
             dup_count += 1
             continue
 
-        encoded = (line + "\n").encode("utf-8")
+        encoded = (line + "
+").encode("utf-8")
         if output_bytes + len(encoded) > MAX_OUTPUT_BYTES:
             size_skip_count += 1
             continue
 
-        out_f.write(line + "\n")
-        seen_f.write(h + "\n")
+        out_f.write(line + "
+")
+        seen_f.write(h + "
+")
         seen_set.add(h)
         output_bytes += len(encoded)
         new_count += 1
         wrote_any = True
 
     if wrote_any:
-        blank = "\n".encode("utf-8")
+        blank = "
+".encode("utf-8")
         if output_bytes + len(blank) <= MAX_OUTPUT_BYTES:
-            out_f.write("\n")
+            out_f.write("
+")
             output_bytes += len(blank)
 
     out_f.flush()
@@ -384,18 +396,19 @@ def write_unique_lines(text, out_f, seen_f, seen_set, output_bytes):
 
 
 # ==============================================================================
-# 銆愭柊澧炴ā鍧楋細楂樺苟鍙戜唬鐞嗘湁鏁堟€ф祴璇曞紩鎿庛€?# ==============================================================================
+# [HIGH-CONCURRENCY VALIDATION ENGINE]
+# ==============================================================================
 def parse_proxy(line: str):
     """
-    閫氱敤浠ｇ悊鍗忚瑙ｆ瀽鍣細瑙ｆ瀽鎻愬彇鐩爣鏈嶅姟鍣?IP/鍩熷悕 涓?绔彛
-    鏀寔鍗忚锛歷mess, vless, trojan, ss, ssr, hysteria, hysteria2, hy2, tuic
+    Parse server host and port from various proxy URI protocols.
+    Supports: vmess, vless, trojan, ss, ssr, hysteria, hysteria2, hy2, tuic
     """
     line = line.strip()
     if not line:
         return None
 
     try:
-        # VMess 鍗忚 (Base64 JSON)
+        # VMess protocol (Base64 JSON)
         if line.startswith("vmess://"):
             b64_str = line[8:]
             pad = len(b64_str) % 4
@@ -449,7 +462,7 @@ def parse_proxy(line: str):
 
 
 async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float):
-    """寮傛鍗曡妭鐐?TCP 鎻℃墜娴嬫椿"""
+    """Asynchronous TCP handshake validation for a single proxy node."""
     parsed = parse_proxy(line)
     if not parsed:
         return None
@@ -472,9 +485,10 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float):
 
 
 async def run_batch_validation(proxies, concurrency=250, timeout=2.5):
-    """澶氬崗绋嬮珮骞跺彂鎵归噺楠岃瘉鑺傜偣"""
+    """Validate list of proxy strings concurrently using asyncio."""
     total = len(proxies)
-    print(f"\n馃殌 寮€濮嬮珮骞跺彂娴嬫椿: 寰呮祴璇曡妭鐐?{total} 涓?| 骞跺彂鏁? {concurrency} | 瓒呮椂: {timeout}s")
+    print(f"
+[+] Starting High-Concurrency Validation: Total={total} | Concurrency={concurrency} | Timeout={timeout}s")
 
     sem = asyncio.Semaphore(concurrency)
     tasks = [asyncio.create_task(check_single_proxy(sem, p, timeout)) for p in proxies]
@@ -493,19 +507,20 @@ async def run_batch_validation(proxies, concurrency=250, timeout=2.5):
             elapsed = time.time() - start_time
             rate = done_count / elapsed if elapsed > 0 else 0
             print(
-                f"杩涘害: [{done_count}/{total}] "
-                f"宸插瓨娲? {len(alive_proxies)} "
-                f"瀛樻椿鐜? {len(alive_proxies) / done_count * 100:.1f}% "
-                f"閫熷害: {rate:.0f} 涓?绉?
+                f"Progress: [{done_count}/{total}] "
+                f"Alive: {len(alive_proxies)} "
+                f"AliveRate: {len(alive_proxies) / done_count * 100:.1f}% "
+                f"Speed: {rate:.0f} nodes/sec"
             )
 
     elapsed_total = time.time() - start_time
-    print(f"鉁?娴嬫椿瀹屾垚! 鑰楁椂: {elapsed_total:.2f} 绉?| 瀛樻椿: {len(alive_proxies)} / {total}")
+    print(f"[+] Validation Completed in {elapsed_total:.2f}s | Alive={len(alive_proxies)}/{total}")
     return alive_proxies
 
 
 # ==============================================================================
-# 銆愪富鎵ц娴佺▼銆?# ==============================================================================
+# [MAIN ENTRY POINT]
+# ==============================================================================
 def main():
     seen = set()
     total_new = 0
@@ -514,9 +529,10 @@ def main():
     output_bytes = 0
 
     # --------------------------------------------------------------------------
-    # 绗竴闃舵锛氳法浠撳簱閲囬泦锛堟牴鎹紑鍏冲喅瀹氭槸鍚︽墽琛岋紝浠ｇ爜瀹屾暣淇濈暀锛?    # --------------------------------------------------------------------------
+    # Stage 1: External Repositories Collection (Toggled by ENABLE_REMOTE_COLLECT)
+    # --------------------------------------------------------------------------
     if ENABLE_REMOTE_COLLECT:
-        print("====== 妯″紡: 鎵ц鍘熺増澶氶」鐩繙绋嬫姄鍙?======")
+        print("====== MODE: Remote GitHub Repositories Fetching Enabled ======")
         with open(OUTPUT_FILE, "w", encoding="utf-8") as out_f, open(SEEN_FILE, "w", encoding="utf-8") as seen_f:
             for project in PROJECTS:
                 name = project["name"]
@@ -527,33 +543,33 @@ def main():
                 try:
                     files, stats = build_project_file_list(project)
                 except urllib.error.URLError as e:
-                    print(f"{name} 璁块棶澶辫触: {e}")
+                    print(f"{name} Access failed: {e}")
                     continue
 
                 if project.get("mode") == "subdirs_all_txt":
                     missing_count = len(stats["subdirs_missing_all_txt"])
                     exists_count = stats["subdirs_total"] - missing_count
                     print(
-                        f"{name} 瀛愭枃浠跺す鎬绘暟: {stats['subdirs_total']}锛?
-                        f"瀛樺湪 all.txt: {exists_count}锛?
-                        f"缂哄皯 all.txt: {missing_count}"
+                        f"{name} Subdirs={stats['subdirs_total']}, "
+                        f"Existing all.txt={exists_count}, "
+                        f"Missing all.txt={missing_count}"
                     )
 
                 if not files:
-                    print(f"{name} 娌℃湁绗﹀悎鏉′欢鐨勬枃妗?)
+                    print(f"{name} No matching files found")
                     continue
 
                 if project.get("recent_hours") is None:
-                    print(f"{name} 鍏?{len(files)} 涓枃妗ｏ紝寮€濮嬪啓鍏?)
+                    print(f"{name} Processing {len(files)} files...")
                 else:
-                    print(f"{name} 鏈€杩?{project['recent_hours']} 灏忔椂鍐呭叡 {len(files)} 涓枃妗ｏ紝寮€濮嬪啓鍏?)
+                    print(f"{name} Processing {len(files)} files updated in past {project['recent_hours']}h...")
 
                 for i, p in enumerate(files, start=1):
                     fn = p.rsplit("/", 1)[-1]
                     try:
                         text = fetch_file_text(owner, repo, branch, p)
                     except urllib.error.URLError as e:
-                        print(f"{name} [{i}/{len(files)}] 璺宠繃 {fn}锛屼笅杞藉け璐? {e}")
+                        print(f"{name} [{i}/{len(files)}] Skipped {fn}, download error: {e}")
                         continue
 
                     n, d, s, output_bytes = write_unique_lines(
@@ -567,22 +583,21 @@ def main():
                     total_dup += d
                     total_size_skip += s
 
-        print(f"閲囬泦瀹屾垚: 鏂板 {total_new} 琛岋紝璺宠繃閲嶅 {total_dup} 琛?)
+        print(f"Collection complete: Added {total_new}, Duplicate {total_dup}")
     else:
-        print("====== 妯″紡: 璺宠繃澶栭儴鎶撳彇锛岀洿鎺ラ獙璇佸綋鍓嶅凡鏀堕泦鐨勪唬鐞?======")
+        print("====== MODE: Skipped Remote Fetching -> Directly Validating Existing Proxies ======")
 
     # --------------------------------------------------------------------------
-    # 绗簩闃舵锛氳鍙栧綋鍓嶈妭鐐规睜骞舵墽琛岄珮骞跺彂娴嬫椿
+    # Stage 2: Read Existing Proxies and Run High-Concurrency Validation
     # --------------------------------------------------------------------------
     if ENABLE_VALIDATION:
         if not os.path.exists(OUTPUT_FILE):
-            print(f"鏈壘鍒拌緭鍏ユ枃浠?{OUTPUT_FILE}锛岃鍏堢‘淇濆凡鏈夐噰闆嗗埌鐨勪唬鐞嗘枃浠躲€?)
+            print(f"[-] Input file {OUTPUT_FILE} not found. Please ensure proxies exist.")
             return
 
         with open(OUTPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
             raw_lines = [line.strip() for line in f if line.strip()]
 
-        # 鍘婚噸涓斿彧鎻愬彇鏈夋剰涔夌殑浠ｇ悊閾炬帴
         unique_nodes = []
         node_seen = set()
         for line in raw_lines:
@@ -591,12 +606,13 @@ def main():
                 unique_nodes.append(line)
 
         if not unique_nodes:
-            print(f"{OUTPUT_FILE} 涓病鏈夋彁鍙栧埌鍚堟硶鐨勪唬鐞嗛摼鎺ワ紙鎴栬€呮枃浠朵负绌猴級銆?)
+            print(f"[-] No valid proxy URLs found in {OUTPUT_FILE} (file may be empty).")
             return
 
-        print(f"浠?{OUTPUT_FILE} 涓彁鍙栧埌 {len(unique_nodes)} 涓緟娴嬩唬鐞嗚妭鐐?)
+        print(f"[+] Loaded {len(unique_nodes)} unique candidate nodes from {OUTPUT_FILE}")
 
-        # 鍚姩寮傛楂樺苟鍙戞祴娲?        alive_results = asyncio.run(
+        # Run concurrent async validation
+        alive_results = asyncio.run(
             run_batch_validation(
                 unique_nodes,
                 concurrency=CHECK_CONCURRENCY,
@@ -604,18 +620,20 @@ def main():
             )
         )
 
-        # 鍐欏叆娴嬫椿鍚庣殑鏈夋晥鏂囦欢 valid_proxies.txt
+        # Write alive proxies to valid_proxies.txt
         with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
             for item in alive_results:
-                vf.write(item[0] + "\n")
-        print(f"馃帀 鏈夋晥鑺傜偣宸蹭繚瀛樿嚦: {VALID_OUTPUT_FILE} (鍏?{len(alive_results)} 鏉?")
+                vf.write(item[0] + "
+")
+        print(f"[+] Saved {len(alive_results)} alive proxies to: {VALID_OUTPUT_FILE}")
 
-        # 鍚屾鏇存柊 all_proxies.txt
+        # Synchronize back to all_proxies.txt
         if SYNC_TO_ALL_PROXIES:
             with open(OUTPUT_FILE, "w", encoding="utf-8") as of:
                 for item in alive_results:
-                    of.write(item[0] + "\n")
-            print(f"馃攧 宸插悓姝ユ洿鏂? {OUTPUT_FILE} (鍏?{len(alive_results)} 鏉?")
+                    of.write(item[0] + "
+")
+            print(f"[+] Synchronized {len(alive_results)} alive proxies to: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
