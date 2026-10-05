@@ -35,6 +35,9 @@ if sys.platform.startswith("win"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
