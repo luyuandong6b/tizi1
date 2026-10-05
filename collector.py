@@ -1040,13 +1040,15 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
                 written_count += 1
         return written_count
 
+    # 1. 重新生成全网全量代理汇总池 (all_proxies.txt)，采用 "w" 模式全量覆写，绝不追加
+    a_cnt = safe_write_lines(OUTPUT_FILE, unique_nodes)
+    print(f"  [+] 成功重新生成全量代理汇总: {OUTPUT_FILE} (全新写入 {a_cnt} 个初筛合规节点，彻底清空旧数据)")
+
+    # 2. 重新生成高精存活节点池 (valid_proxies.txt)，采用 "w" 模式全量覆写，绝不追加
     v_cnt = safe_write_lines(VALID_OUTPUT_FILE, alive_results)
-    print(f"  [+] 成功输出高精存活池: {VALID_OUTPUT_FILE} (写入 {v_cnt} 个独立物理 IP 节点)")
+    print(f"  [+] 成功重新生成高精存活池: {VALID_OUTPUT_FILE} (全新写入 {v_cnt} 个单物理 IP 唯一节点)")
 
-    if SYNC_TO_ALL_PROXIES:
-        a_cnt = safe_write_lines(OUTPUT_FILE, alive_results)
-        print(f"  [+] 成功同步主文件: {OUTPUT_FILE} (写入 {a_cnt} 个节点)")
-
+    # 3. 重新生成指纹哈希文件 (seen_hashes.txt)
     with open(SEEN_FILE, "w", encoding="utf-8") as sf:
         for item in alive_results:
             sf.write(line_hash(item["line"]) + "\n")
