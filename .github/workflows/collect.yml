@@ -9,23 +9,26 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Run collector
+      - name: Run NodeHarvester Collector
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python collector.py
 
-      - name: Commit changes
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add all_proxies.txt seen_hashes.txt valid_proxies.txt
-          git diff --cached --quiet || git commit -m "chore: update aggregated proxies"
-          git push
+          git diff --cached --quiet || git commit -m "chore: auto-update aggregated and verified proxies"
+          git push origin main
