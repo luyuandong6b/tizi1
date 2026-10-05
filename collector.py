@@ -48,6 +48,7 @@ SEEN_FILE = os.path.join(BASE_DIR, "seen_hashes.txt")
 # ==============================================================================
 CHECK_CONCURRENCY = 250
 CHECK_TIMEOUT_SECONDS = 2.5
+MAX_OUTPUT_BYTES = 50 * 1024 * 1024  # 50MB 物理熔断线 (GitHub 50MB 预警，100MB 硬上限)
 SYNC_TO_ALL_PROXIES = True
 REQUEST_INTERVAL_SECONDS = 1.0
 MAX_RETRIES = 3
@@ -1032,18 +1033,30 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
         )
     )
 
-    # 步骤 4: 格式化保存与主文件同步
+    # 步骤 4: 格式化保存与主文件同步 (带 50MB 物理截断熔断保护)
     print("\n[*] 步骤 4/4: 保存最终高精纯存活节点并同步...")
-    with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
-        for item in alive_results:
-            vf.write(item["line"] + "\n")
-    print(f"  [+] 成功输出高精存活池: {VALID_OUTPUT_FILE} (共 {len(alive_results)} 个独立物理 IP 节点)")
+    
+    def safe_write_lines(filepath, items, max_bytes=MAX_OUTPUT_BYTES):
+        written_bytes = 0
+        written_count = 0
+        with open(filepath, "w", encoding="utf-8") as f:
+            for item in items:
+                line_str = item if isinstance(item, str) else item.get("line", "")
+                raw = (line_str + "\n").encode("utf-8")
+                if written_bytes + len(raw) > max_bytes:
+                    print(f"  [!] 触发单文件大小熔断保护: {os.path.basename(filepath)} 已达 {written_bytes/1024/1024:.2f}MB，自动截断防超限！")
+                    break
+                f.write(line_str + "\n")
+                written_bytes += len(raw)
+                written_count += 1
+        return written_count
+
+    v_cnt = safe_write_lines(VALID_OUTPUT_FILE, alive_results)
+    print(f"  [+] 成功输出高精存活池: {VALID_OUTPUT_FILE} (写入 {v_cnt} 个独立物理 IP 节点)")
 
     if SYNC_TO_ALL_PROXIES:
-        with open(OUTPUT_FILE, "w", encoding="utf-8") as of:
-            for item in alive_results:
-                of.write(item["line"] + "\n")
-        print(f"  [+] 成功同步主文件: {OUTPUT_FILE}")
+        a_cnt = safe_write_lines(OUTPUT_FILE, alive_results)
+        print(f"  [+] 成功同步主文件: {OUTPUT_FILE} (写入 {a_cnt} 个节点)")
 
     with open(SEEN_FILE, "w", encoding="utf-8") as sf:
         for item in alive_results:
