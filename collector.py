@@ -48,7 +48,7 @@ SEEN_FILE = os.path.join(BASE_DIR, "seen_hashes.txt")
 # ==============================================================================
 CHECK_CONCURRENCY = 250
 CHECK_TIMEOUT_SECONDS = 2.5
-MAX_OUTPUT_BYTES = 50 * 1024 * 1024  # 50MB 物理熔断线 (GitHub 50MB 预警，100MB 硬上限)
+MAX_OUTPUT_BYTES = 40 * 1024 * 1024  # 40MB 物理熔断线 (更加安全宽裕，彻底远离 GitHub 50MB/100MB 限制)
 SYNC_TO_ALL_PROXIES = True
 REQUEST_INTERVAL_SECONDS = 1.0
 MAX_RETRIES = 3
@@ -973,18 +973,7 @@ def collect_all_sources() -> list:
                         candidate_lines.append(n)
                         sub_count += 1
         print(f"  [+] 成功扫描: {p_name:<26} (扫描 {len(files)} 文件) -> 提取 {sub_count} 个新节点")
-
-    # 4. 容灾保障：如果远程网络受阻，从本地已有 all_proxies.txt 载入
-    if not candidate_lines and os.path.exists(OUTPUT_FILE):
-        print("\n[!] 远程采集未获有效数据，激活本地历史文件后备容灾...")
-        with open(OUTPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                s = line.strip()
-                if s and s not in seen_raw:
-                    seen_raw.add(s)
-                    candidate_lines.append(s)
-
-    print(f"\n[+] 第一部分完成！全网采集汇总候选池总量: {len(candidate_lines)} 个原始节点\n")
+    print(f"\n[+] 第一部分完成！内存全网采集汇总候选池总量: {len(candidate_lines)} 个纯新原始节点 (100% 内存驻留)\n")
     return candidate_lines
 
 
