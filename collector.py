@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHub Actions 自动化节点采集与测活引擎 (严格遵循 GitHub代理处理规则规范)
 ================================================================================
-【7 大执行铁律完全落地】：
+GitHub Actions 代理节点深度采集与多协议测活引擎 (NodeHarvester - 云端执行版)
+================================================================================
+【核心特性与 7 大执行铁律完全落地】：
 1. 协议头标准化规范：hy2:// 强制重写为 hysteria2://，自动补齐 insecure=1 与 sni
 2. 单 IP 绝对唯一去重：测试前静态初筛 + 测活时 Socket peername 真实物理 IP 绝对去重 (绝无重复 IP)
-3. 多数据源并发抓取：原始 13 个仓库 + 8 个国内高频特化鲜活源 + 智能明文/Base64解包
+3. 多类型差异化数据源智能解包：
+   - 覆盖 5 个超低关注度（1~20 Stars）高频防封宝藏源
+   - 覆盖 10 个高频维护的细分协议订阅专线与优选池
+   - 覆盖 13 个原始 GitHub 动态树扫描项目
+   - 智能识别与解包：单行明文、整段 Base64、逐行 Base64、Clash YAML (Hysteria2/VLESS/HTTPS)
 4. 均衡防误杀初筛：仅剔除 .ir 等死域，杜绝主观臆测杀好节点
-5. 云端独立并发测活：asyncio 250 独立网络握手，逐点探测，零连坐
+5. 云端独立高并发测活：asyncio 250 独立网络握手，逐点探测，零连坐
 6. 协议白名单聚焦：仅保留 hysteria2, vless, vmess, https 四大协议，其余全数抛弃
 7. 多协议 TLS 判定：精准识别各协议底层 TLS 特征，拦截裸明文流量，零误杀加密节点
+8. 云端无人值守执行：全自动化流水线，零终端阻塞，兼容 GitHub Actions 与命令行
+================================================================================
 """
 
 import asyncio
@@ -29,67 +36,311 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 # ==============================================================================
-# [全局配置与运行开关]
+# [基础路径与文件配置]
 # ==============================================================================
-ENABLE_REMOTE_COLLECT = True
-ENABLE_SMART_FILTER = True
-ENABLE_ENDPOINT_DEDUP = True
-ENABLE_CONCURRENT_VALIDATION = True
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_FILE = os.path.join(BASE_DIR, "all_proxies.txt")
+VALID_OUTPUT_FILE = os.path.join(BASE_DIR, "valid_proxies.txt")
+SEEN_FILE = os.path.join(BASE_DIR, "seen_hashes.txt")
 
+# ==============================================================================
+# [云端执行参数配置]
+# ==============================================================================
 CHECK_CONCURRENCY = 250
 CHECK_TIMEOUT_SECONDS = 2.5
-
-OUTPUT_FILE = "all_proxies.txt"
-VALID_OUTPUT_FILE = "valid_proxies.txt"
-SEEN_FILE = "seen_hashes.txt"
 SYNC_TO_ALL_PROXIES = True
-MAX_OUTPUT_BYTES = 95 * 1024 * 1024
-
 REQUEST_INTERVAL_SECONDS = 1.0
-MAX_RETRIES = 5
-RETRY_SLEEP_SECONDS = 10
-GITHUB_TOKEN = os.environ.get("GH_PAT", "").strip()
+MAX_RETRIES = 3
+RETRY_SLEEP_SECONDS = 5
+GITHUB_TOKEN = os.environ.get("GH_PAT", "").strip() or os.environ.get("GITHUB_TOKEN", "").strip()
 
 # ==============================================================================
-# [规则 3：高频鲜活特化订阅源 - 针对国内电信/联通/移动网络优化]
+# [代理源清单：针对各源不同结构与格式分类收录]
 # ==============================================================================
-# [规则 3：长期高频维护的全球中立聚合源 - 纯英文/无地域敏感标签]
-# ==============================================================================
-EXTRA_SUBSCRIPTIONS = [
-    # 1. rtwo2 / FastNodes (全自动 CI/CD 每小时实测验活推送，含 VLESS / Hysteria2)
-    "https://raw.githubusercontent.com/rtwo2/FastNodes/main/sub/protocols/vless.txt",
-    "https://raw.githubusercontent.com/rtwo2/FastNodes/main/sub/protocols/hysteria2.txt",
 
-    # 2. 0xRadikal / Free-v2ray-Configs (国际安全研究员维护，Top 100 高速及 Base64 活池)
-    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/top100.txt",
-    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/verified/configs_base64.txt",
-
-    # 3. Au1rxx / free-vpn-subscriptions (全自动流水线每小时自动构建)
-    "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/raw/main/output/v2ray-base64.txt",
-
-    # 4. LalatinaHub / Mineral (知名海外中立代号项目，长期稳定更新)
-    "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
-
-    # 5. ebrasha / free-v2ray-public-list (国际公开源，每 15 分钟自动化更新)
-    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/vless_configs.txt",
-    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/V2Ray-Config-By-EbraSha-All-Type.txt",
-
-    # 6. yebekhe / TelegramV2rayCollector (高频多协议自动化汇总)
-    "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
-    "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/hysteria2",
-
-    # 7. mahdibland / V2RayAggregator (全球老牌高星开源聚合库)
-    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
-
-    # 8. MatinGhanbari / v2ray-configs (自动化分类订阅)
-    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/vless.txt",
-    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/hysteria2.txt",
+# 一、超低关注度（1~20 Stars）高频小众宝藏源（重点防封、防拥堵）
+LOW_ATTENTION_SOURCES = [
+    # 1. rekt0ro / ProxyRift (🌟 1 Star · 每日多频全协议聚合)
+    {
+        "name": "ProxyRift-All-Plain",
+        "repo": "rekt0ro/ProxyRift",
+        "url": "https://raw.githubusercontent.com/rekt0ro/ProxyRift/main/subscriptions/all.txt",
+        "desc": "明文/混合全协议池",
+    },
+    {
+        "name": "ProxyRift-All-B64",
+        "repo": "rekt0ro/ProxyRift",
+        "url": "https://raw.githubusercontent.com/rekt0ro/ProxyRift/main/subscriptions/all-base64.txt",
+        "desc": "Base64全量订阅池",
+    },
+    # 2. zxcursedzxc0721 / vless-subscriptions (🌟 4 Stars · 专注 VLESS 清洗抓取)
+    {
+        "name": "vless-sub-All",
+        "repo": "zxcursedzxc0721/vless-subscriptions",
+        "url": "https://raw.githubusercontent.com/zxcursedzxc0721/vless-subscriptions/main/all/vless.txt",
+        "desc": "全量白名单 VLESS 池",
+    },
+    {
+        "name": "vless-sub-Domain",
+        "repo": "zxcursedzxc0721/vless-subscriptions",
+        "url": "https://raw.githubusercontent.com/zxcursedzxc0721/vless-subscriptions/main/domain/vless.txt",
+        "desc": "域名化 VLESS 专线",
+    },
+    {
+        "name": "vless-sub-RU",
+        "repo": "zxcursedzxc0721/vless-subscriptions",
+        "url": "https://raw.githubusercontent.com/zxcursedzxc0721/vless-subscriptions/main/ru/vless.txt",
+        "desc": "俄罗斯及欧洲边缘节点池",
+    },
+    # 3. Mai-kun / vless-sub-hub (🌟 2 Stars · 小而精 VLESS 优选)
+    {
+        "name": "vless-sub-hub-All",
+        "repo": "Mai-kun/vless-sub-hub",
+        "url": "https://raw.githubusercontent.com/Mai-kun/vless-sub-hub/main/docs/sub/all.txt",
+        "desc": "Base64 优选 VLESS 池",
+    },
+    {
+        "name": "vless-sub-hub-Raw",
+        "repo": "Mai-kun/vless-sub-hub",
+        "url": "https://raw.githubusercontent.com/Mai-kun/vless-sub-hub/main/docs/sub/all_raw.txt",
+        "desc": "明文直连 VLESS 池",
+    },
+    # 4. svinakraft-maker / FlareFeed (🌟 20 Stars · 罕见 Hy2 专线与极速通道)
+    {
+        "name": "FlareFeed-Hy2",
+        "repo": "svinakraft-maker/FlareFeed",
+        "url": "https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/hysteria2.txt",
+        "desc": "Hysteria 2 纯净抗封专线",
+    },
+    {
+        "name": "FlareFeed-Fastest",
+        "repo": "svinakraft-maker/FlareFeed",
+        "url": "https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/fastest.txt",
+        "desc": "极速网络优选池",
+    },
+    {
+        "name": "FlareFeed-Top500",
+        "repo": "svinakraft-maker/FlareFeed",
+        "url": "https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/Top500.txt",
+        "desc": "Top 500 安全节点",
+    },
+    {
+        "name": "FlareFeed-Podpiska",
+        "repo": "svinakraft-maker/FlareFeed",
+        "url": "https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/podpiska.txt",
+        "desc": "综合清洗聚合大池",
+    },
+    # 5. Darmioniks / proxy-and-vless-collector (🌟 16 Stars · 7.4MB 海量储备)
+    {
+        "name": "Darmioniks-Vless-Large",
+        "repo": "Darmioniks/proxy-and-vless-collector",
+        "url": "https://raw.githubusercontent.com/Darmioniks/proxy-and-vless-collector/main/vless.txt",
+        "desc": "7.4MB 海量储备底池",
+    },
+    {
+        "name": "Darmioniks-Vless-Filtered",
+        "repo": "Darmioniks/proxy-and-vless-collector",
+        "url": "https://raw.githubusercontent.com/Darmioniks/proxy-and-vless-collector/main/vless_filtered.txt",
+        "desc": "CI 自动化初滤池",
+    },
 ]
 
+# 二、高频维护的细分协议订阅专线与中立优选池
+CURATED_SUBSCRIPTIONS = [
+    # 0xRadikal / Free-v2ray-Configs 核心细分专线
+    {
+        "name": "0xRadikal-Vless",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/protocols/vless.txt",
+        "desc": "VLESS 纯净大池",
+    },
+    {
+        "name": "0xRadikal-Hy2",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/protocols/hysteria2.txt",
+        "desc": "Hysteria 2 纯净专线",
+    },
+    {
+        "name": "0xRadikal-Verified",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/verified/configs.txt",
+        "desc": "实网 HTTP 验活池",
+    },
+    {
+        "name": "0xRadikal-Fast",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/fast/configs.txt",
+        "desc": "高速优选池",
+    },
+    {
+        "name": "0xRadikal-Vmess",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/protocols/vmess.txt",
+        "desc": "VMess 纯净专线",
+    },
+    {
+        "name": "0xRadikal-Top100",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/top100.txt",
+        "desc": "Top 100 极速活池",
+    },
+    {
+        "name": "0xRadikal-B64",
+        "repo": "0xRadikal/Free-v2ray-Configs",
+        "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/verified/configs_base64.txt",
+        "desc": "Base64 实测活池",
+    },
+    # R3ZARAHIMI 每 2 小时高频刷新源
+    {
+        "name": "R3ZARAHIMI-2h",
+        "repo": "R3ZARAHIMI/tg-v2ray-configs-every2h",
+        "url": "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/refs/heads/main/Original-Configs.txt",
+        "desc": "每2小时定时更新",
+    },
+    # roosterkid 安全 HTTPS 开放代理源
+    {
+        "name": "roosterkid-HTTPS",
+        "repo": "roosterkid/openproxylist",
+        "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+        "desc": "纯净 HTTPS 开放代理",
+    },
+    # ircfspace 自动化清洗混合源
+    {
+        "name": "ircfspace-Mix",
+        "repo": "ircfspace/tvc",
+        "url": "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/mix",
+        "desc": "全自动清洗聚合",
+    },
+    # Delta-Kronecker 2.87MB 全量活跃源
+    {
+        "name": "Delta-Kronecker-All",
+        "repo": "Delta-Kronecker/V2ray-Config",
+        "url": "https://raw.githubusercontent.com/Delta-Kronecker/V2ray-Config/main/config/all_configs.txt",
+        "desc": "超大容量全自动构建",
+    },
+    # iboxz 分协议专线源
+    {
+        "name": "iboxz-Vless",
+        "repo": "iboxz/free-v2ray-collector",
+        "url": "https://raw.githubusercontent.com/iboxz/free-v2ray-collector/main/main/vless.txt",
+        "desc": "VLESS 专线订阅",
+    },
+    {
+        "name": "iboxz-Vmess",
+        "repo": "iboxz/free-v2ray-collector",
+        "url": "https://raw.githubusercontent.com/iboxz/free-v2ray-collector/main/main/vmess.txt",
+        "desc": "VMess 专线订阅",
+    },
+    {
+        "name": "iboxz-Mix",
+        "repo": "iboxz/free-v2ray-collector",
+        "url": "https://raw.githubusercontent.com/iboxz/free-v2ray-collector/main/main/mix.txt",
+        "desc": "混合多协议订阅",
+    },
+    # Mahdi0024 长效自动测活仓库
+    {
+        "name": "Mahdi0024-Proxies",
+        "repo": "Mahdi0024/ProxyCollector",
+        "url": "https://raw.githubusercontent.com/Mahdi0024/ProxyCollector/master/sub/proxies.txt",
+        "desc": "长效自动测活输出",
+    },
+    # MohammadBahemmat 15 分钟高频刷新源
+    {
+        "name": "MohammadBahemmat-15m",
+        "repo": "MohammadBahemmat/V2ray-Collector",
+        "url": "https://raw.githubusercontent.com/MohammadBahemmat/V2ray-Collector/main/Tested.txt",
+        "desc": "15分钟高频刷新池",
+    },
+    # Alirewa 活跃分卷源
+    {
+        "name": "Alirewa-Sub1",
+        "repo": "Alirewa/V2ray-Configs",
+        "url": "https://raw.githubusercontent.com/Alirewa/V2ray-Configs/main/sub1.txt",
+        "desc": "活跃分卷订阅",
+    },
+    # V2RayRoot 核心池
+    {
+        "name": "V2RayRoot-Proxies",
+        "repo": "V2RayRoot/V2RayConfig",
+        "url": "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/proxies.txt",
+        "desc": "高频更新节点库",
+    },
+    # rtwo2 / FastNodes
+    {
+        "name": "rtwo2-Vless",
+        "repo": "rtwo2/FastNodes",
+        "url": "https://raw.githubusercontent.com/rtwo2/FastNodes/main/sub/protocols/vless.txt",
+        "desc": "每小时实测验活 VLESS",
+    },
+    {
+        "name": "rtwo2-Hy2",
+        "repo": "rtwo2/FastNodes",
+        "url": "https://raw.githubusercontent.com/rtwo2/FastNodes/main/sub/protocols/hysteria2.txt",
+        "desc": "每小时实测验活 Hy2",
+    },
+    # Au1rxx / free-vpn-subscriptions
+    {
+        "name": "Au1rxx-B64",
+        "repo": "Au1rxx/free-vpn-subscriptions",
+        "url": "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/raw/main/output/v2ray-base64.txt",
+        "desc": "每小时构建 Base64 订阅",
+    },
+    # LalatinaHub / Mineral
+    {
+        "name": "LalatinaHub-Mineral",
+        "repo": "LalatinaHub/Mineral",
+        "url": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
+        "desc": "老牌中立代号聚合池",
+    },
+    # ebrasha / free-v2ray-public-list
+    {
+        "name": "ebrasha-Vless",
+        "repo": "ebrasha/free-v2ray-public-list",
+        "url": "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/vless_configs.txt",
+        "desc": "15分钟自动化更新 VLESS",
+    },
+    {
+        "name": "ebrasha-All",
+        "repo": "ebrasha/free-v2ray-public-list",
+        "url": "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/V2Ray-Config-By-EbraSha-All-Type.txt",
+        "desc": "全类型订阅汇总",
+    },
+    # yebekhe / TelegramV2rayCollector
+    {
+        "name": "yebekhe-Vless",
+        "repo": "yebekhe/TelegramV2rayCollector",
+        "url": "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
+        "desc": "Telegram 自动化归集 VLESS",
+    },
+    {
+        "name": "yebekhe-Hy2",
+        "repo": "yebekhe/TelegramV2rayCollector",
+        "url": "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/hysteria2",
+        "desc": "Telegram 自动化归集 Hy2",
+    },
+    # mahdibland / V2RayAggregator
+    {
+        "name": "mahdibland-Merge",
+        "repo": "mahdibland/V2RayAggregator",
+        "url": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
+        "desc": "全球高星经典聚合源",
+    },
+    # MatinGhanbari / v2ray-configs
+    {
+        "name": "MatinGhanbari-Vless",
+        "repo": "MatinGhanbari/v2ray-configs",
+        "url": "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/vless.txt",
+        "desc": "分类过滤 VLESS",
+    },
+    {
+        "name": "MatinGhanbari-Hy2",
+        "repo": "MatinGhanbari/v2ray-configs",
+        "url": "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/hysteria2.txt",
+        "desc": "分类过滤 Hy2",
+    },
+]
 
-# ==============================================================================
-# [规则 3：原始 13 个 GitHub 数据源仓库配置 - 100% 完整保留]
-# ==============================================================================
+# 三、原始 13 个 GitHub 动态目录扫描项目
 PROJECTS = [
     {
         "name": "Project1-v2go",
@@ -97,7 +348,6 @@ PROJECTS = [
         "repo": "v2go",
         "branch": "main",
         "dirs": ["Splitted-By-Country"],
-        "recent_hours": None,
     },
     {
         "name": "Project2-Proxify",
@@ -105,7 +355,6 @@ PROJECTS = [
         "repo": "Proxify",
         "branch": "main",
         "dirs": ["v2ray_configs/mixed", "v2ray_configs/seperated_by_protocol"],
-        "recent_hours": 12,
     },
     {
         "name": "Project3-PyroConfig",
@@ -113,7 +362,6 @@ PROJECTS = [
         "repo": "PyroConfig",
         "branch": "main",
         "dirs": ["Configs"],
-        "recent_hours": 12,
     },
     {
         "name": "Project4-ConfigForge-V2Ray",
@@ -121,8 +369,6 @@ PROJECTS = [
         "repo": "ConfigForge-V2Ray",
         "branch": "main",
         "dirs": ["configs"],
-        "recent_hours": 12,
-        "mode": "subdirs_all_txt",
     },
     {
         "name": "Project5-v2ray-configs",
@@ -130,7 +376,6 @@ PROJECTS = [
         "repo": "v2ray-configs",
         "branch": "main",
         "dirs": [],
-        "recent_hours": 12,
         "mode": "explicit_files",
         "file_paths": ["subscriptions/v2ray/all_sub.txt"],
     },
@@ -140,7 +385,6 @@ PROJECTS = [
         "repo": "Freedom-V2Ray",
         "branch": "main",
         "dirs": ["configs"],
-        "recent_hours": 12,
     },
     {
         "name": "Project7-F0rc3Run",
@@ -148,7 +392,6 @@ PROJECTS = [
         "repo": "F0rc3Run",
         "branch": "main",
         "dirs": ["splitted-by-protocol"],
-        "recent_hours": 12,
     },
     {
         "name": "Project8-SoliSpirit",
@@ -156,7 +399,6 @@ PROJECTS = [
         "repo": "v2ray-configs",
         "branch": "main",
         "dirs": ["Sub"],
-        "recent_hours": 12,
     },
     {
         "name": "Project9-Surfboardv2ray",
@@ -164,7 +406,6 @@ PROJECTS = [
         "repo": "TGParse",
         "branch": "main",
         "dirs": ["splitted/mixed"],
-        "recent_hours": 12,
     },
     {
         "name": "Project10-soroushmirzaei",
@@ -172,7 +413,6 @@ PROJECTS = [
         "repo": "telegram-configs-collector",
         "branch": "main",
         "dirs": ["protocols"],
-        "recent_hours": 12,
     },
     {
         "name": "Project11-barry-far",
@@ -180,7 +420,6 @@ PROJECTS = [
         "repo": "V2ray-Configs",
         "branch": "main",
         "dirs": ["Sub1", "Sub2", "Sub3", "Sub4", "Sub5", "Sub6", "Sub7", "Sub8"],
-        "recent_hours": 12,
     },
     {
         "name": "Project12-MrPooyaX",
@@ -188,7 +427,6 @@ PROJECTS = [
         "repo": "V2ray",
         "branch": "master",
         "dirs": ["sub"],
-        "recent_hours": 12,
     },
     {
         "name": "Project13-mohamadfg-dev",
@@ -196,108 +434,176 @@ PROJECTS = [
         "repo": "telegram-v2ray-configs-collector",
         "branch": "main",
         "dirs": ["protocols"],
-        "recent_hours": 12,
     },
 ]
 
-# ==============================================================================
-# [规则 3：智能解包引擎 - 先明文后 Base64，严禁对明文盲目解码]
-# ==============================================================================
-def decode_subscription_text(raw_bytes: bytes) -> str:
-    """智能解析订阅内容（自动兼容明文、Base64 与简单 Clash YAML）"""
-    text = raw_bytes.decode("utf-8", errors="ignore").strip()
-    
-    # 1. 若已经是明文列表或 Clash YAML，直接返回，严禁盲目 Base64 解码导致乱码
-    if any(p in text for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://", "proxies:")):
-        return text
 
-    # 2. 若未检测到协议头，尝试安全 Base64 解密
+# ==============================================================================
+# [规则 3：智能解包引擎 - 深度适配不同源的多样化数据结构]
+# ==============================================================================
+def safe_b64decode(s: str) -> str:
+    """对可能缺失 padding 或包含换行的 Base64 字符串进行安全还原"""
     try:
-        clean_text = "".join(text.split())
-        pad = len(clean_text) % 4
+        clean = "".join(s.split())
+        pad = len(clean) % 4
         if pad:
-            clean_text += "=" * (4 - pad)
-        decoded = base64.b64decode(clean_text).decode("utf-8", errors="ignore")
-        if any(p in decoded for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://")):
-            return decoded
+            clean += "=" * (4 - pad)
+        decoded = base64.b64decode(clean).decode("utf-8", errors="ignore")
+        return decoded
+    except Exception:
+        return ""
+
+
+def convert_clash_dict_to_uri(p: dict) -> str:
+    """
+    将 Clash/Clash Meta YAML 配置中的节点精准解析为标准的 URI
+    支持 Hysteria 2、VLESS (含 Reality 与 TLS)、以及带 TLS 的 HTTPS
+    """
+    try:
+        ptype = str(p.get("type", "")).strip().lower()
+        server = str(p.get("server", "")).strip()
+        port = str(p.get("port", "")).strip()
+        name = str(p.get("name", "clash_node")).strip()
+        tag = urllib.parse.quote(name)
+
+        if not server or not port:
+            return ""
+
+        # 1. Hysteria 2 协议
+        if ptype in ("hysteria2", "hy2"):
+            auth = p.get("password") or p.get("auth") or ""
+            sni = p.get("sni") or server
+            return f"hysteria2://{auth}@{server}:{port}?sni={sni}&insecure=1#{tag}"
+
+        # 2. VLESS 协议
+        elif ptype == "vless":
+            uuid = str(p.get("uuid", "")).strip()
+            tls = str(p.get("tls", "")).lower() in ("true", "1")
+            reality = "reality-opts" in p or "reality" in str(p.get("network", "")).lower()
+            sec = "reality" if reality else ("tls" if tls else "none")
+            sni = p.get("servername") or p.get("sni") or server
+            flow = p.get("flow", "")
+            flow_arg = f"&flow={flow}" if flow else ""
+            return f"vless://{uuid}@{server}:{port}?security={sec}&sni={sni}{flow_arg}#{tag}"
+
+        # 3. 带 TLS 的 HTTPS 代理
+        elif ptype == "http" and str(p.get("tls", "")).lower() in ("true", "1"):
+            user = p.get("username", "")
+            pwd = p.get("password", "")
+            auth = f"{user}:{pwd}@" if (user or pwd) else ""
+            return f"https://{auth}{server}:{port}#{tag}"
+
     except Exception:
         pass
+    return ""
 
-    return text
 
-
-def extract_proxies_from_text(text: str) -> list:
-    """从文本中提取代理节点（支持标准 URI 列表及 Clash YAML 中的 HTTPS 节点）"""
+def extract_proxies_from_clash_yaml(text: str) -> list:
+    """轻量高效解析 Clash YAML 中的 proxies 字典块，无需依赖 PyYAML"""
     nodes = []
     lines = text.splitlines()
+    in_proxies = False
+    current_proxy = {}
 
-    # 处理 Clash YAML 格式的节点 (提取开启了 tls: true 的 http 节点)
-    if "proxies:" in text or "- name:" in text:
-        in_proxies = False
-        current_proxy = {}
-        for line in lines:
-            line_str = line.strip()
-            if line_str == "proxies:":
-                in_proxies = True
-                continue
-            if in_proxies and line.startswith("  - "):
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "proxies:":
+            in_proxies = True
+            continue
+
+        if in_proxies:
+            if line and not line.startswith(" ") and not line.startswith("\t") and ":" in line:
                 if current_proxy:
                     uri = convert_clash_dict_to_uri(current_proxy)
                     if uri:
                         nodes.append(uri)
-                current_proxy = {}
-                line_str = line_str[4:]
-            
-            if in_proxies and ":" in line_str:
-                parts = line_str.split(":", 1)
-                k = parts[0].strip().replace("-", "").strip()
+                break
+
+            if stripped.startswith("- ") and ":" in stripped:
+                if current_proxy:
+                    uri = convert_clash_dict_to_uri(current_proxy)
+                    if uri:
+                        nodes.append(uri)
+                    current_proxy = {}
+                item_content = stripped[2:].strip()
+                if ":" in item_content:
+                    parts = item_content.split(":", 1)
+                    k = parts[0].strip().replace("-", "_")
+                    v = parts[1].strip().strip('"').strip("'")
+                    current_proxy[k] = v
+                continue
+
+            if ":" in stripped:
+                parts = stripped.split(":", 1)
+                k = parts[0].strip().replace("-", "_")
                 v = parts[1].strip().strip('"').strip("'")
                 current_proxy[k] = v
-        if current_proxy:
-            uri = convert_clash_dict_to_uri(current_proxy)
-            if uri:
-                nodes.append(uri)
 
-    # 处理标准单行 URI 格式
-    for line in lines:
-        line_clean = line.strip()
-        if not line_clean or line_clean.startswith("#"):
-            continue
-        if any(line_clean.startswith(prefix) for prefix in ("hysteria2://", "hy2://", "vless://", "vmess://", "https://")):
-            nodes.append(line_clean)
+    if current_proxy:
+        uri = convert_clash_dict_to_uri(current_proxy)
+        if uri:
+            nodes.append(uri)
 
     return nodes
 
 
-def convert_clash_dict_to_uri(p: dict) -> str:
-    """将 Clash 中的 HTTP/HTTPS 节点转为标准 https:// 链接"""
-    ptype = p.get("type", "").lower()
-    server = p.get("server", "").strip()
-    port = p.get("port", "").strip()
-    tls = str(p.get("tls", "")).lower()
-    name = p.get("name", "https_node")
+def decode_and_extract_nodes(raw_bytes: bytes) -> list:
+    """
+    【核心智能解包引擎】：
+    针对不同源各不相同的存储格式，深度兼顾并自动适配：
+    1. 标准单行明文 (vless://, hysteria2://, hy2://, vmess://, https://)
+    2. 全文 Base64 编码 (如 Au1rxx, Mai-kun all.txt)
+    3. 逐行独立 Base64 编码
+    4. Clash YAML 配置
+    5. 自动剔除注释与无效空行
+    """
+    if not raw_bytes:
+        return []
 
-    # 规则 7 & 8: 仅放行带有 TLS 的 HTTPS 代理
-    if ptype == "http" and tls in ("true", "1") and server and port:
-        username = p.get("username", "")
-        password = p.get("password", "")
-        auth = f"{username}:{password}@" if (username or password) else ""
-        return f"https://{auth}{server}:{port}#{urllib.parse.quote(name)}"
-    return ""
+    text = raw_bytes.decode("utf-8", errors="ignore").strip()
+    if not text:
+        return []
+
+    results = []
+
+    # 1. 尝试全文 Base64 解码
+    if not any(p in text for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://", "proxies:")):
+        decoded_candidate = safe_b64decode(text)
+        if any(p in decoded_candidate for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://")):
+            text = decoded_candidate
+
+    # 2. 如果包含 Clash YAML 特征
+    if "proxies:" in text and ("type:" in text or "- name:" in text):
+        yaml_nodes = extract_proxies_from_clash_yaml(text)
+        results.extend(yaml_nodes)
+
+    # 3. 按行流式逐行解析
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if any(line.startswith(p) for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://")):
+            results.append(line)
+            continue
+
+        if len(line) > 20 and not " " in line:
+            b64_unpacked = safe_b64decode(line)
+            if any(b64_unpacked.startswith(p) for p in ("vless://", "vmess://", "hysteria2://", "hy2://", "https://")):
+                results.append(b64_unpacked)
+
+    return results
 
 
 # ==============================================================================
 # [规则 1：协议头标准化规范]
 # ==============================================================================
 def normalize_node_uri(line: str) -> str:
-    """
-    【规则 1】将所有 hy2 统一转换为 sing-box 标准的 hysteria2://，并补齐默认必要参数
-    """
+    """【规则 1】将所有 hy2 统一转换为 sing-box 标准的 hysteria2://，并补齐必要参数"""
     line = line.strip()
     if line.startswith("hy2://"):
         line = "hysteria2://" + line[6:]
 
-    # 对 hysteria2 进行参数健壮性规范 (补齐 insecure=1 防止自签证书报错)
     if line.startswith("hysteria2://"):
         try:
             u = urllib.parse.urlsplit(line)
@@ -319,12 +625,10 @@ def normalize_node_uri(line: str) -> str:
 
 
 # ==============================================================================
-# [规则 2 (阶段一) & 规则 6 & 规则 7：静态初筛与多协议 TLS 精准判定]
+# [规则 2 (第一阶段) & 规则 6 & 规则 7：静态初筛与多协议 TLS 精准判定]
 # ==============================================================================
 def get_node_ip_or_host(line: str):
-    """
-    【规则 2 第一阶段】提取节点目标主机 IP/域名，用于静态初筛去重
-    """
+    """【规则 2 第一阶段】提取节点目标主机 IP/域名，用于静态初筛去重"""
     line = line.strip()
     if not line:
         return None
@@ -347,24 +651,20 @@ def get_node_ip_or_host(line: str):
 
 def parse_and_validate_proxy(line: str):
     """
-    【规则 4、规则 6、规则 7】:
+    【规则 4、规则 6、规则 7】：
     1. 过滤 .ir 等绝对死域
     2. 仅保留 hysteria2, vless, vmess, https 四大协议
     3. 针对性精确判定 TLS 是否为 True，剔除裸明文
-    返回值: (protocol_tag, host, port, priority_rank) 或 None
     """
     line = line.strip()
     if not line:
         return None
 
     try:
-        # 【规则 4】过滤完全无中国大陆路由的伊朗内网死域
         if ".ir" in line or "mbghalibaf" in line or "levikogjgfdd" in line:
             return None
 
-        # ----------------------------------------------------------------------
-        # 1. Hysteria 2 协议 (强制基于 QUIC/UDP，国际标准内建 TLS 1.3，天然为 True)
-        # ----------------------------------------------------------------------
+        # 1. Hysteria 2 协议
         if line.startswith(("hysteria2://", "hy2://")):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
@@ -372,9 +672,7 @@ def parse_and_validate_proxy(line: str):
             if host and port:
                 return ("hy2", host, port, 1)
 
-        # ----------------------------------------------------------------------
-        # 2. VLESS 协议 (必须识别 security=reality 或 security=tls)
-        # ----------------------------------------------------------------------
+        # 2. VLESS 协议
         elif line.startswith("vless://"):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
@@ -388,12 +686,9 @@ def parse_and_validate_proxy(line: str):
                 return ("vless_reality", host, port, 2)
             elif sec == "tls" or port in (443, 8443, 2053, 2083, 2087, 2096):
                 return ("vless_tls", host, port, 3)
-            # 无 TLS / security=none 坚决剔除
             return None
 
-        # ----------------------------------------------------------------------
-        # 3. VMess 协议 (JSON 内 tls 字段为 tls/1/true，或处于 Cloudflare TLS 端口)
-        # ----------------------------------------------------------------------
+        # 3. VMess 协议
         elif line.startswith("vmess://"):
             b64_str = line[8:].split("#")[0]
             pad = len(b64_str) % 4
@@ -410,20 +705,15 @@ def parse_and_validate_proxy(line: str):
             is_tls = tls_val in ("tls", "1", "true") or port in (443, 8443, 2053, 2083, 2087, 2096)
             if is_tls:
                 return ("vmess_tls", host, port, 4)
-            # 明文 VMess 剔除
             return None
 
-        # ----------------------------------------------------------------------
-        # 4. HTTPS 协议 (标准带 TLS 的 HTTP 代理)
-        # ----------------------------------------------------------------------
+        # 4. HTTPS 协议
         elif line.startswith("https://"):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
             port = u.port or 443
             if host and port:
                 return ("https", host, port, 5)
-
-        # 其余所有协议 (trojan, ss, ssr, tuic, socks, 裸明文 http) 全数抛弃！
 
     except Exception:
         pass
@@ -432,12 +722,12 @@ def parse_and_validate_proxy(line: str):
 
 
 # ==============================================================================
-# [规则 5：云端独立并发网络测活 & 规则 2 阶段二：Socket peername 真实物理 IP 绝对去重]
+# [规则 5：独立并发网络测活 & 规则 2 阶段二：Socket peername 真实物理 IP 绝对去重]
 # ==============================================================================
 async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float = 2.5):
     """
     【规则 5】独立并发探测节点物理连通性
-    【规则 2 第二部分】通过底层 Socket 获取其实际解析连接的真实物理 IP
+    【规则 2 第二阶段】通过底层 Socket 获取其实际连接的真实物理出口 IP
     """
     parsed = parse_and_validate_proxy(line)
     if not parsed:
@@ -450,7 +740,6 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float =
             conn = asyncio.open_connection(host, port)
             reader, writer = await asyncio.wait_for(conn, timeout=timeout)
             
-            # 从 Socket 底层提取连接成功的真实物理出口 IP
             peer = writer.get_extra_info("peername")
             real_ip = peer[0] if (peer and len(peer) > 0) else host
 
@@ -460,7 +749,7 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float =
             except Exception:
                 pass
             latency_ms = int((time.time() - t0) * 1000)
-            return {"line": line, "delay": latency_ms, "rank": rank, "real_ip": real_ip}
+            return {"line": line, "delay": latency_ms, "rank": rank, "real_ip": real_ip, "type": proto_type}
         except Exception:
             return None
 
@@ -468,7 +757,7 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float =
 async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
     """
     【规则 5】全量高并发独立测活
-    【规则 2 第二部分】严格执行真实物理 IP 绝对唯一去重 (相同的 IP 绝不重复出现)
+    【规则 2 第二阶段】严格执行真实物理 IP 绝对唯一去重 (相同的 IP 绝不重复出现)
     """
     print(f"\n[*] 启动云端高并发独立测活: 待测节点={len(candidate_nodes)} | 并发数={concurrency} | 超时={timeout}s")
     sem = asyncio.Semaphore(concurrency)
@@ -489,10 +778,8 @@ async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
             rate = done / elapsed if elapsed > 0 else 0
             print(f"  测活进度: [{done}/{total}] 初步连通={len(alive_results)} 速率={rate:.0f}节点/s")
 
-    # 1. 优先按协议质量升序 (hy2 > reality > vless_tls > vmess > https)，同协议按延迟升序
     alive_results.sort(key=lambda x: (x["rank"], x["delay"]))
 
-    # 2. 【规则 2 第二部分】：动态真实物理 IP 绝对唯一去重
     final_unique_alive = []
     seen_physical_ips = set()
     for item in alive_results:
@@ -503,7 +790,7 @@ async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
 
     print(f"[+] 测活与物理 IP 去重完成! 耗时: {time.time()-start_time:.1f}s")
     print(f"    - 初步连通节点: {len(alive_results)} 个")
-    print(f"    - 【单物理 IP 唯一存活】: {len(final_unique_alive)} 个 (彻底消灭所有复用同 IP 的换皮节点)")
+    print(f"    - 【单物理 IP 唯一存活】: {len(final_unique_alive)} 个 (彻底剔除所有复用同 IP 的换皮节点)")
     return final_unique_alive
 
 
@@ -521,12 +808,11 @@ def github_request_json(url):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 data = resp.read().decode("utf-8")
                 return json.loads(data)
         except urllib.error.HTTPError as e:
             if e.code in (403, 429) and attempt < MAX_RETRIES:
-                print(f"[!] Rate limited ({e.code}), retrying in {RETRY_SLEEP_SECONDS}s... (attempt {attempt}/{MAX_RETRIES})")
                 time.sleep(RETRY_SLEEP_SECONDS)
                 continue
             raise
@@ -537,18 +823,17 @@ def github_request_json(url):
             raise
 
 
-def fetch_file_text(owner, repo, branch, path):
+def fetch_file_text_from_raw(owner, repo, branch, path):
     url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{urllib.parse.quote(path)}"
-    headers = {"User-Agent": "proxy-auto-collector"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                raw_bytes = resp.read()
-                return decode_subscription_text(raw_bytes)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read()
         except urllib.error.HTTPError as e:
             if e.code in (403, 429) and attempt < MAX_RETRIES:
                 time.sleep(RETRY_SLEEP_SECONDS)
@@ -562,15 +847,18 @@ def fetch_file_text(owner, repo, branch, path):
 
 
 def list_tree(owner, repo, branch):
-    ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{urllib.parse.quote(branch)}"
-    ref_data = github_request_json(ref_url)
-    commit_sha = ref_data["object"]["sha"]
-    commit_url = f"https://api.github.com/repos/{owner}/{repo}/git/commits/{commit_sha}"
-    commit_data = github_request_json(commit_url)
-    tree_sha = commit_data["tree"]["sha"]
-    tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
-    tree_data = github_request_json(tree_url)
-    return tree_data.get("tree", [])
+    try:
+        ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{urllib.parse.quote(branch)}"
+        ref_data = github_request_json(ref_url)
+        commit_sha = ref_data["object"]["sha"]
+        commit_url = f"https://api.github.com/repos/{owner}/{repo}/git/commits/{commit_sha}"
+        commit_data = github_request_json(commit_url)
+        tree_sha = commit_data["tree"]["sha"]
+        tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
+        tree_data = github_request_json(tree_url)
+        return tree_data.get("tree", [])
+    except Exception:
+        return []
 
 
 def build_project_file_list(project):
@@ -598,169 +886,188 @@ def line_hash(line):
 
 
 # ==============================================================================
-# 【第一部分：采集所有链接源并全量汇总】
+# 【第一阶段：全量多源差异化采集与汇总】
 # ==============================================================================
 def collect_all_sources() -> list:
-    """
-    第一大部分：只负责从外部所有来源（13个仓库 + 8个全球中立订阅源）中极速抓取，
-    进行智能解包，全量汇总合并为一个待处理候选大池，不做任何主观过滤。
-    """
+    """从所有预定义的数据源中并发拉取并解包，合并至全量候选池"""
     candidate_lines = []
     seen_raw = set()
 
-    if not ENABLE_REMOTE_COLLECT:
-        print("[*] 远程采集开关已关闭，跳过第一部分采集。")
-        return candidate_lines
-
     print("======================================================================")
-    print("【第一部分】：采集所有链接源并全量汇总")
+    print("【第一部分】：全网多源差异化采集与解包汇总")
     print("======================================================================")
 
-    # 1.1 并发采集 8 个全球长期维护的高频中立订阅源
-    print(f"[*] 正在拉取 {len(EXTRA_SUBSCRIPTIONS)} 个全球高频中立订阅源...")
-    for extra_url in EXTRA_SUBSCRIPTIONS:
+    # 1. 抓取超低关注度（1~20 Stars）高频宝藏源
+    print(f"\n[*] [1/3] 正在拉取 {len(LOW_ATTENTION_SOURCES)} 个超低关注度(1~20 Stars)小众宝藏源...")
+    for src in LOW_ATTENTION_SOURCES:
+        name = src["name"]
+        url = src["url"]
+        desc = src["desc"]
         try:
-            req = urllib.request.Request(extra_url, headers={"User-Agent": "proxy-auto-collector"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                decoded_text = decode_subscription_text(resp.read())
-                extracted = extract_proxies_from_text(decoded_text)
-                new_sub_count = 0
-                for line in extracted:
-                    if line not in seen_raw:
-                        seen_raw.add(line)
-                        candidate_lines.append(line)
-                        new_sub_count += 1
-                source_name = extra_url.split("/")[4] if "/" in extra_url else "sub"
-                print(f"  [+] 成功解析: {source_name} (+{new_sub_count} 节点)")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw_bytes = resp.read()
+                nodes = decode_and_extract_nodes(raw_bytes)
+                new_cnt = 0
+                for n in nodes:
+                    if n not in seen_raw:
+                        seen_raw.add(n)
+                        candidate_lines.append(n)
+                        new_cnt += 1
+                print(f"  [+] 成功解析: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
         except Exception as e:
-            source_name = extra_url.split("/")[4] if "/" in extra_url else "sub"
-            print(f"  [-] 订阅源跳过: {source_name} ({e})")
+            print(f"  [-] 请求跳过: {name:<26} ({e})")
 
-    # 1.2 多线程并发拉取原始 13 个 GitHub 数据源仓库
-    print(f"\n[*] 正在并发采集 {len(PROJECTS)} 个原始 GitHub 仓库...")
+    # 2. 抓取高频维护的中立优选专线源
+    print(f"\n[*] [2/3] 正在拉取 {len(CURATED_SUBSCRIPTIONS)} 个常规高频中立优选专线...")
+    for src in CURATED_SUBSCRIPTIONS:
+        name = src["name"]
+        url = src["url"]
+        desc = src["desc"]
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw_bytes = resp.read()
+                nodes = decode_and_extract_nodes(raw_bytes)
+                new_cnt = 0
+                for n in nodes:
+                    if n not in seen_raw:
+                        seen_raw.add(n)
+                        candidate_lines.append(n)
+                        new_cnt += 1
+                print(f"  [+] 成功解析: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
+        except Exception as e:
+            print(f"  [-] 订阅跳过: {name:<26} ({e})")
+
+    # 3. 动态抓取 13 个 GitHub 仓库项目
+    print(f"\n[*] [3/3] 正在检索与并发抓取 {len(PROJECTS)} 个 GitHub 目录树项目...")
     for project in PROJECTS:
-        name = project["name"]
+        p_name = project["name"]
         owner = project["owner"]
         repo = project["repo"]
         branch = project["branch"]
 
         try:
             files = build_project_file_list(project)
-        except urllib.error.URLError as e:
-            print(f"[-] {name} 访问失败: {e}")
+        except Exception as e:
+            print(f"  [-] 项目树跳过: {p_name} ({e})")
             continue
 
         if not files:
             continue
 
-        def fetch_worker(p):
+        def worker(p):
             try:
-                return fetch_file_text(owner, repo, branch, p)
+                raw = fetch_file_text_from_raw(owner, repo, branch, p)
+                return decode_and_extract_nodes(raw)
             except Exception:
-                return ""
+                return []
 
-        with ThreadPoolExecutor(max_workers=12) as ex:
-            for text in ex.map(fetch_worker, files):
-                extracted = extract_proxies_from_text(text)
-                for line in extracted:
-                    if line not in seen_raw:
-                        seen_raw.add(line)
-                        candidate_lines.append(line)
+        sub_count = 0
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for nodes in ex.map(worker, files):
+                for n in nodes:
+                    if n not in seen_raw:
+                        seen_raw.add(n)
+                        candidate_lines.append(n)
+                        sub_count += 1
+        print(f"  [+] 成功扫描: {p_name:<26} (扫描 {len(files)} 文件) -> 提取 {sub_count} 个新节点")
 
-    # 1.3 历史后备容灾保障
+    # 4. 容灾保障：如果远程网络受阻，从本地已有 all_proxies.txt 载入
     if not candidate_lines and os.path.exists(OUTPUT_FILE):
-        print("[!] 远程采集未获有效数据，激活历史文件后备容灾...")
+        print("\n[!] 远程采集未获有效数据，激活本地历史文件后备容灾...")
         with open(OUTPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if line and line not in seen_raw:
-                    seen_raw.add(line)
-                    candidate_lines.append(line)
+            for line in f:
+                s = line.strip()
+                if s and s not in seen_raw:
+                    seen_raw.add(s)
+                    candidate_lines.append(s)
 
     print(f"\n[+] 第一部分完成！全网采集汇总候选池总量: {len(candidate_lines)} 个原始节点\n")
     return candidate_lines
 
 
 # ==============================================================================
-# 【第二部分：把汇总后的链接按 7 大铁律统一处理】
+# 【第二阶段：7 大铁律深度处理、测活与输出】
 # ==============================================================================
-def process_and_validate_candidates(candidate_lines: list):
+def process_and_validate_candidates(candidate_lines: list, concurrency=250, timeout=2.5):
     """
-    第二大部分：接收第一部分汇总完毕的候选节点池，严格按 7 大铁律流水线依次处理：
-    初筛 -> 协议标准化 -> 静态初去重 -> 独立并发测活 -> 底层真实物理IP绝对去重 -> 输出
+    第二阶段：执行 7 大执行铁律流水线
+    协议白名单初筛 -> 协议标准化 -> 静态单IP初筛 -> 异步并发测活 -> 真实物理IP绝对去重 -> 输出
     """
     if not candidate_lines:
-        print("[-] 待处理候选池为空，退出处理。")
-        return
+        print("[-] 候选池为空，无可用节点。")
+        return []
 
     print("======================================================================")
-    print("【第二部分】：对汇总后的链接统一进行深度处理与测活")
+    print("【第二部分】：执行 7 大铁律标准化清洗与测活流水线")
     print("======================================================================")
 
-    # 步骤 2.1: 协议白名单初筛与各协议 TLS 针对性判定 (规则 4、规则 6、规则 7)
-    if ENABLE_SMART_FILTER:
-        print("[*] 步骤 1/4: 执行协议白名单(Hy2/VLESS/VMess/HTTPS)与 TLS 加密真伪识别...")
-        filtered_nodes = []
-        for line in candidate_lines:
-            if parse_and_validate_proxy(line) is not None:
-                filtered_nodes.append(line)
-        print(f"  [+] 筛选保留合规加密节点: {len(filtered_nodes)} / {len(candidate_lines)} (已物理剔除非白名单协议及裸明文)")
-        candidate_lines = filtered_nodes
+    # 步骤 1: 协议白名单初筛与 TLS 加密真伪识别 (规则 4、规则 6、规则 7)
+    print("[*] 步骤 1/4: 执行协议白名单 (Hy2/VLESS/VMess/HTTPS) 校验与 TLS 加密辨识...")
+    filtered_nodes = []
+    for line in candidate_lines:
+        if parse_and_validate_proxy(line) is not None:
+            filtered_nodes.append(line)
+    print(f"  [+] 白名单初筛保留: {len(filtered_nodes)} / {len(candidate_lines)} 个 (已物理剔除非白名单及裸明文)")
 
-    # 步骤 2.2: 规则 1 协议头标准化规范 & 规则 2 第一阶段静态单 IP 去重
-    if ENABLE_ENDPOINT_DEDUP:
-        print("\n[*] 步骤 2/4: 执行协议标准化规范(hy2->hysteria2/参数补齐)与静态单 IP 初筛去重...")
-        dedup_map = {}
-        for line in candidate_lines:
-            host_key = get_node_ip_or_host(line)
-            normalized_line = normalize_node_uri(line)
-            if host_key and host_key not in dedup_map:
-                dedup_map[host_key] = normalized_line
-        unique_nodes = list(dedup_map.values())
-        print(f"  [+] 静态初筛完成: 粗筛为 {len(unique_nodes)} 个独立目标节点")
-    else:
-        unique_nodes = [normalize_node_uri(l) for l in candidate_lines]
+    # 步骤 2: 规则 1 协议头标准化规范 & 规则 2 第一阶段静态单 IP 去重
+    print("\n[*] 步骤 2/4: 执行协议规范化 (hy2->hysteria2/参数补齐) 与静态单 IP 初筛去重...")
+    dedup_map = {}
+    for line in filtered_nodes:
+        host_key = get_node_ip_or_host(line)
+        normalized_line = normalize_node_uri(line)
+        if host_key and host_key not in dedup_map:
+            dedup_map[host_key] = normalized_line
+    unique_nodes = list(dedup_map.values())
+    print(f"  [+] 静态初筛完成: 粗筛为 {len(unique_nodes)} 个独立目标候选节点")
 
-    # 步骤 2.3: 规则 5 云端独立并发测活 & 规则 2 第二阶段动态底层真实物理 IP 绝对去重
-    if ENABLE_CONCURRENT_VALIDATION and unique_nodes:
-        print("\n[*] 步骤 3/4: 执行原生异步 250 并发独立网络测活 (零连坐)...")
-        alive_results = asyncio.run(
-            run_batch_validation(
-                unique_nodes,
-                concurrency=CHECK_CONCURRENCY,
-                timeout=CHECK_TIMEOUT_SECONDS,
-            )
+    # 步骤 3: 规则 5 云端独立并发测活 & 规则 2 第二阶段动态底层真实物理 IP 绝对去重
+    print(f"\n[*] 步骤 3/4: 执行原生异步 {concurrency} 并发独立网络测活 (零连坐)...")
+    alive_results = asyncio.run(
+        run_batch_validation(
+            unique_nodes,
+            concurrency=concurrency,
+            timeout=timeout,
         )
+    )
 
-        # 步骤 2.4: 格式化保存与主文件同步
-        print("\n[*] 步骤 4/4: 保存最终高精纯存活节点并同步主池...")
-        with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
+    # 步骤 4: 格式化保存与主文件同步
+    print("\n[*] 步骤 4/4: 保存最终高精纯存活节点并同步...")
+    with open(VALID_OUTPUT_FILE, "w", encoding="utf-8") as vf:
+        for item in alive_results:
+            vf.write(item["line"] + "\n")
+    print(f"  [+] 成功输出高精存活池: {VALID_OUTPUT_FILE} (共 {len(alive_results)} 个独立物理 IP 节点)")
+
+    if SYNC_TO_ALL_PROXIES:
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as of:
             for item in alive_results:
-                vf.write(item["line"] + "\n")
-        print(f"  [+] 成功输出高精存活池: {VALID_OUTPUT_FILE} (共 {len(alive_results)} 个独立物理 IP 节点)")
+                of.write(item["line"] + "\n")
+        print(f"  [+] 成功同步主文件: {OUTPUT_FILE}")
 
-        if SYNC_TO_ALL_PROXIES:
-            with open(OUTPUT_FILE, "w", encoding="utf-8") as of:
-                for item in alive_results:
-                    of.write(item["line"] + "\n")
-            print(f"  [+] 成功同步主文件: {OUTPUT_FILE}")
+    with open(SEEN_FILE, "w", encoding="utf-8") as sf:
+        for item in alive_results:
+            sf.write(line_hash(item["line"]) + "\n")
 
-        with open(SEEN_FILE, "w", encoding="utf-8") as sf:
-            for item in alive_results:
-                sf.write(line_hash(item["line"]) + "\n")
+    return alive_results
 
 
 # ==============================================================================
-# [主运行入口]
+# [程序入口]
 # ==============================================================================
 def main():
-    # 1. 第一部分：采集所有链接源并全量汇总
-    raw_candidates = collect_all_sources()
-
-    # 2. 第二部分：把汇总后的链接再统一处理与测活
-    process_and_validate_candidates(raw_candidates)
+    t0 = time.time()
+    print("=" * 70)
+    print(">>> 启动 GitHub Actions 代理节点采集与测活引擎 <<<")
+    print("=" * 70)
+    raw = collect_all_sources()
+    alive = process_and_validate_candidates(raw, concurrency=CHECK_CONCURRENCY, timeout=CHECK_TIMEOUT_SECONDS)
+    print("\n" + "=" * 70)
+    print(f"🎉 全部流程执行圆满完成！总耗时: {time.time()-t0:.1f} 秒")
+    print(f"  - 原始候选池: {len(raw)} 个")
+    print(f"  - 单物理IP唯一存活: {len(alive)} 个")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
     main()
-
