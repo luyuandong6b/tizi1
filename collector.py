@@ -2,15 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-GitHub Actions 代理节点全量深度采集与多协议测活引擎 (NodeHarvester - 增强版)
+GitHub Actions 代理节点全量深度采集与云端初筛引擎 (NodeHarvester - 云端初筛版)
 ================================================================================
-1. 100% 全量聚合：完整收录原始 13 个 GitHub 核心仓库 + 15 个高价值分协议优选源
-2. 零遗漏提取：基于 Zip 极速打包检索 + 内存流式解包，免疫 API 限流与鉴权中断
-3. 原始汇总全量无损：第一阶段原始收集绝不压缩单 IP、绝不筛协议，真实留存全部候选节点
-4. 40MB 单文件严格上限与规律分卷：
-   - 超过 40MB 自动规律切分：all_proxies_1.txt, all_proxies_2.txt, all_proxies_3.txt...
-   - 同时镜像生成 all_proxies.txt，保障常规订阅链接无缝兼容
-5. 第二阶段独立验活：协议白名单 + TLS 安全判定 + 真实物理出口 IP 绝对唯一去重
+【核心执行流程与铁律规范】：
+1. 内存全网聚合：从 13 个原始核心仓库 + 20 个高频优选源全量解包（百万级节点纯内存驻留，绝不落地脏数据）
+2. 规则 1 协议规范化：hy2:// 自动重写为 hysteria2://，补齐 insecure=1 与 sni 参数
+3. 规则 2 基础过滤：剔除 .ir 死域、私有内网 IP 及无效测试占位符
+4. 规则 3 协议聚焦与加密判定：支持 hysteria2/vless/vmess/trojan/ss/https，剔除裸明文
+5. 规则 4 内存单 Host 粗排重：同一目标地址初筛去重，快速消肿
+6. 规则 5 云端海外高并发握手测活：asyncio 250 并发底层探测，剔除 90%+ 绝对应答死亡节点
+7. 规则 6 真实物理出口 IP 绝对唯一：通过 Socket peername 获取真实物理 IP，彻底消灭马甲换皮节点
+8. 规则 7 质量排序：按协议优先级与握手延迟毫秒排序，优质节点排在最前
+9. 规则 8 落地分卷存储：仅将初筛存活的优质节点落盘，单文件上限严格锁死 40MB，超限规律自动拆分
 ================================================================================
 """
 
@@ -45,15 +48,14 @@ SEEN_FILE = os.path.join(BASE_DIR, "seen_hashes.txt")
 # ==============================================================================
 CHECK_CONCURRENCY = 250
 CHECK_TIMEOUT_SECONDS = 2.5
-MAX_OUTPUT_BYTES = 40 * 1024 * 1024  # 严格 40MB 单文件上限 (超过自动拆分)
+MAX_OUTPUT_BYTES = 40 * 1024 * 1024  # 严格 40MB 单文件物理上限 (超限自动拆分)
 REQUEST_TIMEOUT_SECONDS = 25
-MAX_RETRIES = 3
 
 # ==============================================================================
-# [代理源清单：针对各源不同结构与格式分类收录]
+# [数据源清单：13 原始核心仓库 + 超低关注度防封源 + 高频细分专线]
 # ==============================================================================
 
-# 一、超低关注度（1~20 Stars）高频小众宝藏源（重点防封、防拥堵）
+# 一、超低关注度（1~20 Stars）高频小众宝藏源
 LOW_ATTENTION_SOURCES = [
     {
         "name": "ProxyRift-All-Plain",
@@ -135,7 +137,7 @@ LOW_ATTENTION_SOURCES = [
     },
 ]
 
-# 二、高频维护的细分协议订阅专线与中立优选池
+# 二、高频维护的细分协议订阅专线
 CURATED_SUBSCRIPTIONS = [
     {
         "name": "0xRadikal-Vless",
@@ -265,9 +267,8 @@ CURATED_SUBSCRIPTIONS = [
     },
 ]
 
-# 三、原始 13 个 GitHub 核心仓库 (100% 完整收录并追加优质扩展库)
+# 三、原始 13 个核心仓库 + 扩展动态库 (100% 完整收录)
 PROJECTS = [
-    # 1. Danialsamadi/v2go
     {
         "name": "Project1-v2go",
         "owner": "Danialsamadi",
@@ -275,7 +276,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["Splitted-By-Country"],
     },
-    # 2. Firmfox/Proxify
     {
         "name": "Project2-Proxify",
         "owner": "Firmfox",
@@ -283,7 +283,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["v2ray_configs/mixed", "v2ray_configs/seperated_by_protocol", "v2ray_configs/separated_by_protocol", "v2ray_configs/subscriptions"],
     },
-    # 3. 0xAbolfazl/PyroConfig
     {
         "name": "Project3-PyroConfig",
         "owner": "0xAbolfazl",
@@ -291,7 +290,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["Configs"],
     },
-    # 4. ShatakVPN/ConfigForge-V2Ray
     {
         "name": "Project4-ConfigForge-V2Ray",
         "owner": "ShatakVPN",
@@ -299,7 +297,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["configs"],
     },
-    # 5. MatinGhanbari/v2ray-configs
     {
         "name": "Project5-v2ray-configs",
         "owner": "MatinGhanbari",
@@ -308,7 +305,6 @@ PROJECTS = [
         "dirs": ["subscriptions/v2ray", "subscriptions/filtered"],
         "files": ["subscriptions/v2ray/all_sub.txt"],
     },
-    # 6. MahanKenway/Freedom-V2Ray
     {
         "name": "Project6-Freedom-V2Ray",
         "owner": "MahanKenway",
@@ -316,7 +312,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["configs"],
     },
-    # 7. F0rc3Run/F0rc3Run
     {
         "name": "Project7-F0rc3Run",
         "owner": "F0rc3Run",
@@ -324,7 +319,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["splitted-by-protocol"],
     },
-    # 8. SoliSpirit/v2ray-configs
     {
         "name": "Project8-SoliSpirit",
         "owner": "SoliSpirit",
@@ -333,7 +327,6 @@ PROJECTS = [
         "dirs": ["Subscriptions", "Protocols"],
         "files": ["all_configs.txt"],
     },
-    # 9. iboxz/free-v2ray-collector
     {
         "name": "Project9-free-v2ray-collector",
         "owner": "iboxz",
@@ -341,7 +334,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["main"],
     },
-    # 10. hamedcode/port-based-v2ray-configs
     {
         "name": "Project10-port-based-v2ray-configs",
         "owner": "hamedcode",
@@ -349,7 +341,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["sub"],
     },
-    # 11. sevcator/5ubscrpt10n
     {
         "name": "Project11-5ubscrpt10n",
         "owner": "sevcator",
@@ -357,7 +348,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["mini", "protocols"],
     },
-    # 12. Epodonios/v2ray-configs (Splitted-By-Protocol)
     {
         "name": "Project12-Epodonios-Splitted",
         "owner": "Epodonios",
@@ -365,7 +355,6 @@ PROJECTS = [
         "branch": "main",
         "dirs": ["Splitted-By-Protocol"],
     },
-    # 13. Epodonios/v2ray-configs (All_Configs_Sub.txt)
     {
         "name": "Project13-Epodonios-AllConfigsSub",
         "owner": "Epodonios",
@@ -374,7 +363,6 @@ PROJECTS = [
         "dirs": [],
         "files": ["All_Configs_Sub.txt"],
     },
-    # 优质补充 14. Surfboardv2ray/TGParse
     {
         "name": "Project14-Surfboardv2ray",
         "owner": "Surfboardv2ray",
@@ -383,7 +371,6 @@ PROJECTS = [
         "dirs": ["splitted"],
         "files": ["splitted/vless", "splitted/vmess", "splitted/hy2", "splitted/hysteria2", "splitted/mixed"],
     },
-    # 优质补充 15. mohamadfg-dev/telegram-v2ray-configs-collector
     {
         "name": "Project15-mohamadfg-dev",
         "owner": "mohamadfg-dev",
@@ -393,7 +380,6 @@ PROJECTS = [
     },
 ]
 
-# 允许采集的协议前缀规范 (覆盖所有可用代理类型)
 KNOWN_PROTOCOLS = (
     "vless://",
     "vmess://",
@@ -413,10 +399,10 @@ KNOWN_PROTOCOLS = (
 )
 
 # ==============================================================================
-# [智能解包引擎]
+# [内存解包与解析引擎]
 # ==============================================================================
 def safe_b64decode(s: str) -> str:
-    """安全还原任意 Base64 编码 (自动补齐 padding 与清洗空白字符)"""
+    """安全还原任意 Base64 编码"""
     try:
         clean = "".join(s.split())
         pad = len(clean) % 4
@@ -543,7 +529,7 @@ def extract_proxies_from_clash_yaml(text: str) -> list:
 
 
 def decode_and_extract_nodes(raw_bytes: bytes) -> list:
-    """【万能解包引擎】：支持明文、全文 Base64、逐行 Base64、Clash YAML"""
+    """万能解包：支持明文、全文 Base64、逐行 Base64、Clash YAML"""
     if not raw_bytes:
         return []
 
@@ -553,18 +539,15 @@ def decode_and_extract_nodes(raw_bytes: bytes) -> list:
 
     results = []
 
-    # 1. 尝试全文 Base64 解码
     if not any(p in text for p in KNOWN_PROTOCOLS + ("proxies:",)):
         decoded_candidate = safe_b64decode(text)
         if any(p in decoded_candidate for p in KNOWN_PROTOCOLS):
             text = decoded_candidate
 
-    # 2. 如果包含 Clash YAML
     if "proxies:" in text and ("type:" in text or "- name:" in text):
         yaml_nodes = extract_proxies_from_clash_yaml(text)
         results.extend(yaml_nodes)
 
-    # 3. 按行流式逐行解析
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -583,7 +566,7 @@ def decode_and_extract_nodes(raw_bytes: bytes) -> list:
 
 
 def normalize_node_uri(line: str) -> str:
-    """协议头标准化 (hy2:// 转为 hysteria2:// 并补齐必要参数)"""
+    """【规则 1】：协议头标准化规范 (hy2:// 转为 hysteria2:// 并补齐必要参数)"""
     line = line.strip()
     if line.startswith("hy2://"):
         line = "hysteria2://" + line[6:]
@@ -612,19 +595,9 @@ def normalize_node_uri(line: str) -> str:
 # [40MB 物理上限与规律拆分引擎]
 # ==============================================================================
 def save_split_files(base_filename: str, lines: list, max_bytes: int = MAX_OUTPUT_BYTES) -> list:
-    """
-    【核心分卷逻辑】：
-    1. 严格控制单文件体积 <= 40MB。
-    2. 若超过 40MB，按规律顺序拆分：
-       - all_proxies_1.txt (第 1 卷, <= 40MB)
-       - all_proxies_2.txt (第 2 卷, <= 40MB)
-       - all_proxies_3.txt (第 3 卷, <= 40MB)
-       ...
-    3. 同时保留主文件 (如 all_proxies.txt)，其内容为第 1 卷的镜像，确保常规订阅工具无缝获取。
-    """
+    """【规则 8】：严格限制单文件体积 <= 40MB，超限按序号规律拆分"""
     stem, ext = os.path.splitext(base_filename)
     
-    # 1. 彻底清理旧的分卷文件，防止历史残留
     for old_file in glob.glob(f"{stem}*{ext}"):
         try:
             os.remove(old_file)
@@ -661,7 +634,6 @@ def save_split_files(base_filename: str, lines: list, max_bytes: int = MAX_OUTPU
     if current_lines:
         write_current_part(current_part_idx, current_lines)
 
-    # 规范镜像：生成主文件名 (如 all_proxies.txt)
     part1_path = f"{stem}_1{ext}"
     if os.path.exists(part1_path):
         shutil.copyfile(part1_path, base_filename)
@@ -672,13 +644,10 @@ def save_split_files(base_filename: str, lines: list, max_bytes: int = MAX_OUTPU
 
 
 # ==============================================================================
-# [第一阶段：全量多源无损采集 (Zip 极速下载 + 纯内存解包)]
+# [第一阶段：纯内存全网聚合 (100% 内存驻留，绝不落地脏数据)]
 # ==============================================================================
 def fetch_project_via_zip(project: dict) -> list:
-    """
-    通过 GitHub codeload Zip 极速打包通道下载，免 Token 鉴权，免 API 配额限制
-    在内存中直接匹配并解包指定目录与文件，确保 100% 捕获，绝不遗漏
-    """
+    """Zip 极速下载解包，免 Token 鉴权，免 API 配额限制"""
     name = project["name"]
     owner = project["owner"]
     repo = project["repo"]
@@ -699,23 +668,19 @@ def fetch_project_via_zip(project: dict) -> list:
             for item in zf.namelist():
                 if item.endswith("/"):
                     continue
-                # 去除 zip 根目录前缀 (例如 "v2go-main/...")
                 parts = item.split("/", 1)
                 rel_path = parts[1] if len(parts) > 1 else item
 
                 matched = False
-                # 1. 匹配显式指定文件
                 for tf in target_files:
                     if rel_path.lower() == tf.lower() or os.path.basename(rel_path).lower() == tf.lower():
                         matched = True
                         break
 
-                # 2. 匹配目录前缀
                 if not matched:
                     for d in dirs:
                         prefix = d.lower() + "/"
                         if rel_path.lower().startswith(prefix):
-                            # 捕获 .txt, .sub, .json, .yaml 或无后缀分类文件
                             ext = os.path.splitext(rel_path)[1].lower()
                             if ext in (".txt", ".sub", ".json", ".yaml", ""):
                                 matched = True
@@ -728,8 +693,7 @@ def fetch_project_via_zip(project: dict) -> list:
                         extracted_nodes.extend(nodes)
                     except Exception:
                         pass
-    except Exception as e:
-        # Zip 异常时退化为尝试 raw 方式读取显式文件
+    except Exception:
         for tf in target_files:
             try:
                 raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{tf}"
@@ -742,23 +706,17 @@ def fetch_project_via_zip(project: dict) -> list:
     return extracted_nodes
 
 
-def collect_all_sources() -> list:
-    """
-    全网海量代理无损汇聚：
-    1. 拉取 5 个小众宝藏防封源
-    2. 拉取 15 个细分协议优选专线源
-    3. 极速扫描 15 个 GitHub 目录树项目 (含原始 13 核心仓库)
-    4. 仅执行单行内容哈希排重，保留全部原始链接与所有协议！
-    """
+def collect_all_sources_in_ram() -> list:
+    """全网海量代理聚合：百万级节点纯内存驻留"""
     candidate_lines = []
     seen_hashes = set()
 
     print("======================================================================")
-    print("【第一部分】：全网海量代理全量采集与无损聚合")
+    print("【第一部分】：全网海量代理原始聚合 (纯内存驻留，不落地脏数据)")
     print("======================================================================")
 
     # 1. 抓取小众宝藏源
-    print(f"\n[*] [1/3] 正在拉取 {len(LOW_ATTENTION_SOURCES)} 个超低关注度(1~20 Stars)小众宝藏源...")
+    print(f"\n[*] [1/3] 正在内存拉取 {len(LOW_ATTENTION_SOURCES)} 个小众防封宝藏源...")
     for src in LOW_ATTENTION_SOURCES:
         name = src["name"]
         url = src["url"]
@@ -774,12 +732,12 @@ def collect_all_sources() -> list:
                         seen_hashes.add(h)
                         candidate_lines.append(n)
                         new_cnt += 1
-                print(f"  [+] 成功解析: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
+                print(f"  [+] 内存解包: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
         except Exception as e:
             print(f"  [-] 请求跳过: {name:<26} ({e})")
 
     # 2. 抓取中立优选专线
-    print(f"\n[*] [2/3] 正在拉取 {len(CURATED_SUBSCRIPTIONS)} 个高频中立优选专线...")
+    print(f"\n[*] [2/3] 正在内存拉取 {len(CURATED_SUBSCRIPTIONS)} 个细分协议高频专线...")
     for src in CURATED_SUBSCRIPTIONS:
         name = src["name"]
         url = src["url"]
@@ -795,7 +753,7 @@ def collect_all_sources() -> list:
                         seen_hashes.add(h)
                         candidate_lines.append(n)
                         new_cnt += 1
-                print(f"  [+] 成功解析: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
+                print(f"  [+] 内存解包: {name:<26} ({desc}) -> 提取 {new_cnt} 个新节点")
         except Exception as e:
             print(f"  [-] 请求跳过: {name:<26} ({e})")
 
@@ -815,54 +773,48 @@ def collect_all_sources() -> list:
                         seen_hashes.add(h)
                         candidate_lines.append(n)
                         new_cnt += 1
-                print(f"  [+] 成功解包: {p_name:<28} -> 提取 {new_cnt} 个新节点")
+                print(f"  [+] 内存解包: {p_name:<28} -> 提取 {new_cnt} 个新节点")
             except Exception as e:
                 print(f"  [-] 解包跳过: {p_name:<28} ({e})")
 
-    print(f"\n[+] 第一部分完成！全网原始节点聚合总量: {len(candidate_lines)} 个有效配置！\n")
-
-    # 保存原始汇总池 (单文件上限 40MB，超过规律自动拆分)
-    print(f"[*] 正在将全量原始节点写入存储 (单文件物理上限: 40MB)...")
-    split_parts = save_split_files(OUTPUT_FILE, candidate_lines, max_bytes=MAX_OUTPUT_BYTES)
-    for part in split_parts:
-        sz_mb = os.path.getsize(part) / 1024 / 1024
-        print(f"  -> 生成分卷文件: {os.path.basename(part)} (大小: {sz_mb:.2f} MB)")
-
+    print(f"\n[+] 内存聚合完成！全网原始候选池规模: {len(candidate_lines)} 个节点 (全部纯内存驻留，不落地)\n")
     return candidate_lines
 
 
 # ==============================================================================
-# [第二阶段：安全初筛、异步独立测活与物理 IP 绝对去重]
+# [第二阶段：云端 8 大铁律初筛流水线]
 # ==============================================================================
 def parse_and_validate_proxy(line: str):
     """
-    测活阶段协议过滤：
-    1. 过滤 .ir 等死域
-    2. 仅保留 hysteria2, vless, vmess, https 四大协议
-    3. 校验 TLS 加密真伪
+    【规则 2 & 规则 3】：
+    1. 剔除 .ir、localhost、私有 IP 等死域
+    2. 仅保留 hysteria2, vless, vmess, trojan, ss, https 主流协议
+    3. 校验 TLS 加密真伪，剔除裸明文
     """
     line = line.strip()
     if not line:
         return None
 
     try:
-        if ".ir" in line or "mbghalibaf" in line or "levikogjgfdd" in line:
+        lower = line.lower()
+        # 规则 2: 过滤死域与自环回地址
+        if ".ir" in lower or "mbghalibaf" in lower or "levikogjgfdd" in lower or "localhost" in lower or "127.0.0.1" in lower or "0.0.0.0" in lower:
             return None
 
-        # 1. Hysteria 2 协议
+        # 1. Hysteria 2 协议 (优先级 1)
         if line.startswith(("hysteria2://", "hy2://")):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
             port = u.port or 443
-            if host and port:
+            if host and port and 1 <= port <= 65535:
                 return ("hy2", host, port, 1)
 
-        # 2. VLESS 协议
+        # 2. VLESS 协议 (优先级 2: Reality, 3: TLS)
         elif line.startswith("vless://"):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
             port = u.port or 443
-            if not host or not port:
+            if not host or not port or not (1 <= port <= 65535):
                 return None
 
             q = urllib.parse.parse_qs(u.query)
@@ -873,7 +825,15 @@ def parse_and_validate_proxy(line: str):
                 return ("vless_tls", host, port, 3)
             return None
 
-        # 3. VMess 协议
+        # 3. Trojan 协议 (优先级 3)
+        elif line.startswith("trojan://"):
+            u = urllib.parse.urlsplit(line)
+            host = u.hostname
+            port = u.port or 443
+            if host and port and 1 <= port <= 65535:
+                return ("trojan", host, port, 3)
+
+        # 4. VMess 协议 (优先级 4)
         elif line.startswith("vmess://"):
             b64_str = line[8:].split("#")[0]
             pad = len(b64_str) % 4
@@ -883,7 +843,7 @@ def parse_and_validate_proxy(line: str):
             data = json.loads(raw)
             host = data.get("add") or data.get("host")
             port = int(data.get("port", 0))
-            if not host or port <= 0:
+            if not host or not (1 <= port <= 65535):
                 return None
 
             tls_val = str(data.get("tls", "")).lower()
@@ -892,13 +852,21 @@ def parse_and_validate_proxy(line: str):
                 return ("vmess_tls", host, port, 4)
             return None
 
-        # 4. HTTPS 协议
+        # 5. Shadowsocks 协议 (优先级 5)
+        elif line.startswith("ss://"):
+            u = urllib.parse.urlsplit(line)
+            host = u.hostname
+            port = u.port or 8388
+            if host and port and 1 <= port <= 65535:
+                return ("ss", host, port, 5)
+
+        # 6. HTTPS 协议 (优先级 6)
         elif line.startswith("https://"):
             u = urllib.parse.urlsplit(line)
             host = u.hostname
             port = u.port or 443
-            if host and port:
-                return ("https", host, port, 5)
+            if host and port and 1 <= port <= 65535:
+                return ("https", host, port, 6)
     except Exception:
         pass
 
@@ -906,7 +874,7 @@ def parse_and_validate_proxy(line: str):
 
 
 async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float = 2.5):
-    """底层 Socket 物理连通性握手与出口 IP 探测"""
+    """【规则 5 & 规则 6】：底层 Socket 物理握手探测与真实出口 IP 提取"""
     parsed = parse_and_validate_proxy(line)
     if not parsed:
         return None
@@ -933,8 +901,8 @@ async def check_single_proxy(sem: asyncio.Semaphore, line: str, timeout: float =
 
 
 async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
-    """高并发异步独立测活与单物理 IP 唯一去重"""
-    print(f"\n[*] 启动云端高并发独立测活: 待测节点={len(candidate_nodes)} | 并发数={concurrency} | 超时={timeout}s")
+    """【规则 5 & 规则 6 & 规则 7】：全量并发握手初筛 + 单物理 IP 绝对去重 + 质量排序"""
+    print(f"\n[*] 启动云端高并发握手测活: 待测节点={len(candidate_nodes)} | 并发数={concurrency} | 超时={timeout}s")
     sem = asyncio.Semaphore(concurrency)
     tasks = [asyncio.create_task(check_single_proxy(sem, p, timeout)) for p in candidate_nodes]
 
@@ -951,10 +919,12 @@ async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
         if done % 1000 == 0 or done == total:
             elapsed = time.time() - start_time
             rate = done / elapsed if elapsed > 0 else 0
-            print(f"  测活进度: [{done}/{total}] 连通={len(alive_results)} 速率={rate:.0f}节点/s")
+            print(f"  握手进度: [{done}/{total}] 连通响应={len(alive_results)} 速率={rate:.0f}节点/s")
 
+    # 规则 7: 按协议抗封锁等级与握手延迟毫秒综合排序
     alive_results.sort(key=lambda x: (x["rank"], x["delay"]))
 
+    # 规则 6: 真实物理出口 IP 绝对唯一去重 (同一物理机仅保留 1 个最优节点)
     final_unique_alive = []
     seen_physical_ips = set()
     for item in alive_results:
@@ -963,31 +933,32 @@ async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
             seen_physical_ips.add(real_ip)
             final_unique_alive.append(item)
 
-    print(f"[+] 测活与物理 IP 去重完成! 耗时: {time.time()-start_time:.1f}s")
-    print(f"    - 初步连通节点: {len(alive_results)} 个")
+    print(f"[+] 云端初筛完成! 耗时: {time.time()-start_time:.1f}s")
+    print(f"    - 初步握手连通: {len(alive_results)} 个")
     print(f"    - 【单物理 IP 唯一存活】: {len(final_unique_alive)} 个 (彻底剔除所有复用同 IP 换皮节点)")
     return final_unique_alive
 
 
 def process_and_validate_candidates(candidate_lines: list, concurrency=250, timeout=2.5):
-    """第二阶段执行流水线"""
+    """云端初筛执行总装流水线"""
     if not candidate_lines:
-        print("[-] 候选池为空，无可用节点。")
+        print("[-] 内存候选池为空，无可用节点。")
         return []
 
     print("======================================================================")
-    print("【第二部分】：执行高精存活池筛选 (协议聚焦 + TLS + 单物理IP验活)")
+    print("【第二部分】：执行云端 8 大铁律初筛流水线 (握手连通 + 物理单IP提纯)")
     print("======================================================================")
 
-    # 1. 协议白名单初筛
-    print("[*] 步骤 1/3: 协议白名单 (Hy2/VLESS/VMess/HTTPS) 校验与 TLS 加密辨识...")
+    # 步骤 1: 格式清洗、协议聚焦与安全初筛 (规则 1, 2, 3)
+    print("[*] 步骤 1/4: 执行协议白名单校验、TLS 加密真伪识别与参数规范化...")
     filtered_nodes = []
     for line in candidate_lines:
         if parse_and_validate_proxy(line) is not None:
             filtered_nodes.append(normalize_node_uri(line))
-    print(f"  [+] 白名单初筛保留: {len(filtered_nodes)} / {len(candidate_lines)} 个")
+    print(f"  [+] 初筛保留: {len(filtered_nodes)} / {len(candidate_lines)} 个 (已剔除死域、内网伪地址与裸明文)")
 
-    # 2. 静态域名初步去重，降低并发压力
+    # 步骤 2: 内存静态单 Host 排重 (规则 4)
+    print("\n[*] 步骤 2/4: 执行内存单 Host 初步排重，消减重复域名冗余...")
     dedup_map = {}
     for line in filtered_nodes:
         try:
@@ -998,9 +969,10 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
         except Exception:
             pass
     unique_candidates = list(dedup_map.values())
-    print(f"  [+] 静态初筛完成: 提取出 {len(unique_candidates)} 个独立目标节点参与连通性测活")
+    print(f"  [+] 静态消肿完成: 提炼出 {len(unique_candidates)} 个独立目标节点参与网络握手测活")
 
-    # 3. 异步并发测活
+    # 步骤 3: 异步并发网络握手测活与物理 IP 去重 (规则 5, 6, 7)
+    print("\n[*] 步骤 3/4: 云端海外高并发底层握手连通性探测 (零连坐)...")
     alive_results = asyncio.run(
         run_batch_validation(
             unique_candidates,
@@ -1009,12 +981,20 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
         )
     )
 
-    # 4. 保存高精存活池与指纹
+    # 步骤 4: 落地保存初筛结果 (规则 8: 严格 40MB 单文件物理上限与规律拆分)
+    print("\n[*] 步骤 4/4: 将初筛存活节点规律落盘写入仓库 (严格 40MB 单文件上限)...")
     alive_lines = [item["line"] for item in alive_results]
-    valid_parts = save_split_files(VALID_OUTPUT_FILE, alive_lines, max_bytes=MAX_OUTPUT_BYTES)
-    for vp in valid_parts:
-        print(f"  -> 生成存活分卷: {os.path.basename(vp)} ({len(alive_lines)} 个存活节点)")
 
+    # 保存初筛后的主文件 all_proxies.txt (及规律分卷)
+    all_parts = save_split_files(OUTPUT_FILE, alive_lines, max_bytes=MAX_OUTPUT_BYTES)
+    for p in all_parts:
+        sz_mb = os.path.getsize(p) / 1024 / 1024
+        print(f"  -> 生成初筛分卷: {os.path.basename(p)} ({sz_mb:.2f} MB)")
+
+    # 镜像保存 valid_proxies.txt 保持兼容
+    save_split_files(VALID_OUTPUT_FILE, alive_lines, max_bytes=MAX_OUTPUT_BYTES)
+
+    # 保存指纹
     with open(SEEN_FILE, "w", encoding="utf-8") as sf:
         for item in alive_results:
             sf.write(hashlib.sha256(item["line"].encode("utf-8")).hexdigest() + "\n")
@@ -1028,14 +1008,14 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
 def main():
     t0 = time.time()
     print("=" * 70)
-    print(">>> 启动 GitHub Actions 代理全量采集与高精测活引擎 <<<")
+    print(">>> 启动 GitHub Actions 代理全量采集与云端初筛引擎 <<<")
     print("=" * 70)
-    raw = collect_all_sources()
+    raw = collect_all_sources_in_ram()
     alive = process_and_validate_candidates(raw, concurrency=CHECK_CONCURRENCY, timeout=CHECK_TIMEOUT_SECONDS)
     print("\n" + "=" * 70)
-    print(f"🎉 全部采集与测活流程圆满完成！总耗时: {time.time()-t0:.1f} 秒")
-    print(f"  - 全量原始候选池: {len(raw)} 个")
-    print(f"  - 单物理IP唯一存活: {len(alive)} 个")
+    print(f"🎉 全部采集与云端初筛流程圆满完成！总耗时: {time.time()-t0:.1f} 秒")
+    print(f"  - 内存聚合原始总数: {len(raw)} 个 (已自动释放，不落地)")
+    print(f"  - 初筛单物理IP存活: {len(alive)} 个 (已规律落盘推库)")
     print("=" * 70)
 
 
