@@ -28,8 +28,13 @@ import re
 import shutil
 import socket
 import sys
-import time
-import urllib.error
+# 解决 Windows 控制台编码问题
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import urllib.parse
 import urllib.request
 import zipfile
@@ -1013,7 +1018,7 @@ def main():
     raw = collect_all_sources_in_ram()
     alive = process_and_validate_candidates(raw, concurrency=CHECK_CONCURRENCY, timeout=CHECK_TIMEOUT_SECONDS)
     print("\n" + "=" * 70)
-    print(f"🎉 全部采集与云端初筛流程圆满完成！总耗时: {time.time()-t0:.1f} 秒")
+    print(f" 全部采集与云端初筛流程圆满完成！总耗时: {time.time()-t0:.1f} 秒")
     print(f"  - 内存聚合原始总数: {len(raw)} 个 (已自动释放，不落地)")
     print(f"  - 初筛单物理IP存活: {len(alive)} 个 (已规律落盘推库)")
     print("=" * 70)
