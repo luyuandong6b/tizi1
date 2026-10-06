@@ -765,82 +765,6 @@ def collect_all_sources_in_ram() -> list:
         except Exception as e:
             print(f"  [-] 请求跳过: {name:<26} ({e})")
 
-    # 3. 动态扫描 15 个 GitHub 目录树项目 (含原始 13 核心仓库)
-    print(f"\n[*] [3/3] 正在 Zip 并发解包检索 {len(PROJECTS)} 个 GitHub 项目 (含原始 13 核心仓库)...")
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_map = {executor.submit(fetch_project_via_zip, p): p for p in PROJECTS}
-        for future in future_map:
-            p = future_map[future]
-            p_name = p["name"]
-            try:
-                nodes = future.result()
-                new_cnt = 0
-                for n in nodes:
-                    h = hashlib.sha256(n.encode("utf-8")).hexdigest()
-                    if h not in seen_hashes:
-                        seen_hashes.add(h)
-                        candidate_lines.append(n)
-                        new_cnt += 1
-                print(f"  [+] 内存解包: {p_name:<28} -> 提取 {new_cnt} 个新节点")
-            except Exception as e:
-                print(f"  [-] 解包跳过: {p_name:<28} ({e})")
-
-    print(f"\n[+] 内存聚合完成！全网原始候选池规模: {len(candidate_lines)} 个节点 (全部纯内存驻留，不落地)\n")
-    return candidate_lines
-
-
-# ==============================================================================
-# [第二阶段：云端 8 大铁律初筛流水线]
-# ==============================================================================
-def parse_and_validate_proxy(line: str):
-    """
-    【规则 2 & 规则 3】：
-    1. 剔除 .ir、localhost、私有 IP 等死域
-    2. 仅保留 hysteria2, vless, vmess, trojan, ss, https 主流协议
-    3. 校验 TLS 加密真伪，剔除裸明文
-    """
-    line = line.strip()
-    if not line:
-        return None
-
-    try:
-        lower = line.lower()
-        # 规则 2: 过滤死域与自环回地址
-        if ".ir" in lower or "mbghalibaf" in lower or "levikogjgfdd" in lower or "localhost" in lower or "127.0.0.1" in lower or "0.0.0.0" in lower:
-            return None
-
-        # 1. Hysteria 2 协议 (优先级 1)
-        if line.startswith(("hysteria2://", "hy2://")):
-            u = urllib.parse.urlsplit(line)
-            host = u.hostname
-            port = u.port or 443
-            if host and port and 1 <= port <= 65535:
-                return ("hy2", host, port, 1)
-
-        # 2. VLESS 协议 (优先级 2: Reality, 3: TLS)
-        elif line.startswith("vless://"):
-            u = urllib.parse.urlsplit(line)
-            host = u.hostname
-            port = u.port or 443
-            if not host or not port or not (1 <= port <= 65535):
-                return None
-
-            q = urllib.parse.parse_qs(u.query)
-            sec = q.get("security", ["none"])[0].lower()
-            if sec == "reality":
-                return ("vless_reality", host, port, 2)
-            elif sec == "tls" or port in (443, 8443, 2053, 2083, 2087, 2096):
-                return ("vless_tls", host, port, 3)
-            return None
-
-        # 3. Trojan 协议 (优先级 3)
-        elif line.startswith("trojan://"):
-            u = urllib.parse.urlsplit(line)
-            host = u.hostname
-            port = u.port or 443
-            if host and port and 1 <= port <= 65535:
-                return ("trojan", host, port, 3)
-
         # 4. VMess 协议 (优先级 4)
         elif line.startswith("vmess://"):
             b64_str = line[8:].split("#")[0]
@@ -859,14 +783,6 @@ def parse_and_validate_proxy(line: str):
             if is_tls:
                 return ("vmess_tls", host, port, 4)
             return None
-
-        # 5. Shadowsocks 协议 (优先级 5)
-        elif line.startswith("ss://"):
-            u = urllib.parse.urlsplit(line)
-            host = u.hostname
-            port = u.port or 8388
-            if host and port and 1 <= port <= 65535:
-                return ("ss", host, port, 5)
 
         # 6. HTTPS 协议 (优先级 6)
         elif line.startswith("https://"):
