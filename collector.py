@@ -99,6 +99,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_FILE = os.path.join(BASE_DIR, "all_proxies.txt")
 
 VALID_OUTPUT_FILE = os.path.join(BASE_DIR, "valid_proxies.txt")
+FINAL_OUTPUT_FILE = os.path.join(BASE_DIR, "final_valid_proxies.txt")
 
 SEEN_FILE = os.path.join(BASE_DIR, "seen_hashes.txt")
 
@@ -1864,6 +1865,386 @@ async def run_batch_validation(candidate_nodes, concurrency=250, timeout=2.5):
 
 
 
+
+
+# ==============================================================================
+# [sing-box 真实 Cloudflare 204 网页深度测活引擎 (Linux/云端高并发版)]
+# ==============================================================================
+VALID_FP = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random"}
+SINGBOX_TEST_URL = "http://cp.cloudflare.com/generate_204"
+SINGBOX_BATCH_SIZE = 120
+SINGBOX_CONCURRENCY = 40
+SINGBOX_TIMEOUT_MS = 3500
+SINGBOX_CLASH_PORT = 19999
+SINGBOX_DNS_CACHE = {}
+
+def get_node_physical_ip(line: str) -> str:
+    """提取节点的底层物理出口 IP (带内存 DNS 缓存)"""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        host = None
+        if line.startswith(("vless://", "hysteria2://", "hy2://", "trojan://", "https://")):
+            u = urllib.parse.urlsplit(line)
+            host = u.hostname
+        elif line.startswith("vmess://"):
+            b64_str = line[8:].split("#")[0]
+            pad = len(b64_str) % 4
+            if pad:
+                b64_str += "=" * (4 - pad)
+            data = json.loads(base64.b64decode(b64_str).decode("utf-8", errors="ignore"))
+            host = data.get("add") or data.get("host")
+
+        if not host:
+            return None
+
+        host_lower = host.lower()
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", host_lower):
+            return host_lower
+
+        if host_lower in SINGBOX_DNS_CACHE:
+            return SINGBOX_DNS_CACHE[host_lower]
+
+        try:
+            resolved_ip = socket.gethostbyname(host_lower)
+            SINGBOX_DNS_CACHE[host_lower] = resolved_ip
+            return resolved_ip
+        except Exception:
+            return host_lower
+    except Exception:
+        pass
+    return None
+
+def parse_proxy_to_singbox_outbound(line: str, tag: str):
+    """将代理 URI 字符串解析为 sing-box 标准 outbound JSON"""
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+
+    try:
+        # 1. VLESS 协议
+        if line.startswith("vless://"):
+            u = urllib.parse.urlsplit(line)
+            q = urllib.parse.parse_qs(u.query)
+            sec = q.get("security", ["none"])[0].lower()
+            net = q.get("type", ["tcp"])[0].lower()
+            if net in ("xhttp", "raw"):
+                return None
+
+            ob = {
+                "type": "vless",
+                "tag": tag,
+                "server": u.hostname,
+                "server_port": int(u.port or 443),
+                "uuid": u.username or "",
+            }
+            if not ob["server"] or not ob["uuid"]:
+                return None
+
+            flow = q.get("flow", [""])[0]
+            if flow in ("xtls-rprx-vision", "xtls-rprx-vision-udp443"):
+                ob["flow"] = flow
+
+            if sec in ("tls", "reality"):
+                tls = {
+                    "enabled": True,
+                    "server_name": q.get("sni", [u.hostname])[0],
+                    "insecure": True
+                }
+                fp = q.get("fp", ["chrome"])[0].lower()
+                if fp not in VALID_FP:
+                    fp = "chrome"
+                tls["utls"] = {"enabled": True, "fingerprint": fp}
+
+                if sec == "reality":
+                    pbk = q.get("pbk", [""])[0]
+                    sid = q.get("sid", [""])[0]
+                    if not pbk or len(pbk) < 30:
+                        return None
+                    tls["reality"] = {
+                        "enabled": True,
+                        "public_key": pbk,
+                        "short_id": sid
+                    }
+                ob["tls"] = tls
+
+            if net == "ws":
+                ob["transport"] = {
+                    "type": "ws",
+                    "path": q.get("path", ["/"])[0],
+                    "headers": {"Host": q.get("host", [u.hostname])[0]}
+                }
+            return ob
+
+        # 2. Hysteria 2 协议
+        elif line.startswith(("hysteria2://", "hy2://")):
+            u = urllib.parse.urlsplit(line)
+            if not u.hostname:
+                return None
+            q = urllib.parse.parse_qs(u.query)
+            raw_pwd = u.username or ""
+            pwd = urllib.parse.unquote(raw_pwd)
+            ob = {
+                "type": "hysteria2",
+                "tag": tag,
+                "server": u.hostname,
+                "server_port": int(u.port or 443),
+                "password": pwd,
+                "tls": {
+                    "enabled": True,
+                    "server_name": q.get("sni", [u.hostname])[0],
+                    "insecure": True
+                }
+            }
+            if "obfs" in q:
+                ob["obfs"] = {
+                    "type": q["obfs"][0],
+                    "password": q.get("obfs-password", [""])[0]
+                }
+            mport = q.get("mport", q.get("ports", [None]))[0]
+            if mport:
+                singbox_mport = mport.replace("-", ":")
+                ob["server_ports"] = [singbox_mport]
+            return ob
+
+        # 3. VMess 协议
+        elif line.startswith("vmess://"):
+            b64_str = line[8:].split("#")[0]
+            pad = len(b64_str) % 4
+            if pad:
+                b64_str += "=" * (4 - pad)
+            raw = base64.b64decode(b64_str).decode("utf-8", errors="ignore")
+            data = json.loads(raw)
+
+            host = data.get("add") or data.get("host")
+            port = int(data.get("port", 0))
+            uuid = data.get("id")
+            if not host or port <= 0 or not uuid:
+                return None
+
+            ob = {
+                "type": "vmess",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "uuid": uuid,
+                "security": "auto"
+            }
+            net = data.get("net", "tcp")
+            if net == "ws":
+                tr = {"type": "ws", "path": data.get("path", "/")}
+                if data.get("host"):
+                    tr["headers"] = {"Host": data.get("host")}
+                ob["transport"] = tr
+
+            if str(data.get("tls", "")).lower() in ("tls", "1", "true") or port in (443, 8443):
+                ob["tls"] = {
+                    "enabled": True,
+                    "server_name": data.get("sni") or data.get("host") or host,
+                    "insecure": True
+                }
+            return ob
+
+        # 4. Trojan 协议
+        elif line.startswith("trojan://"):
+            u = urllib.parse.urlsplit(line)
+            q = urllib.parse.parse_qs(u.query)
+            ob = {
+                "type": "trojan",
+                "tag": tag,
+                "server": u.hostname,
+                "server_port": int(u.port or 443),
+                "password": u.username or "",
+                "tls": {
+                    "enabled": True,
+                    "server_name": q.get("sni", [u.hostname])[0],
+                    "insecure": True
+                }
+            }
+            if not ob["server"] or not ob["password"]:
+                return None
+            return ob
+
+        # 5. HTTPS 协议
+        elif line.startswith("https://"):
+            u = urllib.parse.urlsplit(line)
+            ob = {
+                "type": "http",
+                "tag": tag,
+                "server": u.hostname,
+                "server_port": int(u.port or 443),
+                "tls": {
+                    "enabled": True,
+                    "server_name": u.hostname,
+                    "insecure": True
+                }
+            }
+            if u.username or u.password:
+                ob["username"] = u.username or ""
+                ob["password"] = u.password or ""
+            return ob
+
+    except Exception:
+        pass
+    return None
+
+def test_singbox_batch(batch_nodes, batch_index, total_batches, sing_box_bin):
+    """单批次 sing-box 启动并并发向 Clash API 查询 204 延迟"""
+    tag_to_raw = {}
+    outbounds = []
+
+    for i, raw_line in enumerate(batch_nodes):
+        tag = f"node-{batch_index}-{i}"
+        ob = parse_proxy_to_singbox_outbound(raw_line, tag)
+        if ob:
+            outbounds.append(ob)
+            tag_to_raw[tag] = raw_line
+
+    if not outbounds:
+        return []
+
+    temp_cfg_path = os.path.join(BASE_DIR, f"_temp_batch_{batch_index}.json")
+
+    # 预检并剔除不合法参数的异常节点
+    while outbounds:
+        cfg = {
+            "log": {"level": "warn"},
+            "dns": {
+                "servers": [{"tag": "dns-direct", "address": "1.1.1.1", "detour": "direct"}],
+                "rules": [{"outbound": "any", "server": "dns-direct"}],
+                "final": "dns-direct",
+                "strategy": "prefer_ipv4"
+            },
+            "inbounds": [],
+            "outbounds": outbounds + [{"type": "direct", "tag": "direct"}],
+            "experimental": {
+                "clash_api": {
+                    "external_controller": f"127.0.0.1:{SINGBOX_CLASH_PORT}"
+                }
+            }
+        }
+        with open(temp_cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+
+        check_res = subprocess.run(
+            [sing_box_bin, "check", "-c", temp_cfg_path],
+            capture_output=True,
+            text=True
+        )
+        if check_res.returncode == 0:
+            break
+
+        m = re.search(r"outbound\[(\d+)\]", check_res.stderr)
+        if m:
+            bad_idx = int(m.group(1))
+            if bad_idx < len(outbounds):
+                outbounds.pop(bad_idx)
+            else:
+                break
+        else:
+            break
+
+    if not outbounds:
+        if os.path.exists(temp_cfg_path):
+            try: os.remove(temp_cfg_path)
+            except Exception: pass
+        return []
+
+    proc = subprocess.Popen(
+        [sing_box_bin, "run", "-c", temp_cfg_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(1.2)
+
+    alive_nodes = []
+    encoded_target = urllib.parse.quote(SINGBOX_TEST_URL)
+    direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def query_delay(ob):
+        t = ob["tag"]
+        url = f"http://127.0.0.1:{SINGBOX_CLASH_PORT}/proxies/{t}/delay?url={encoded_target}&timeout={SINGBOX_TIMEOUT_MS}"
+        try:
+            req = urllib.request.Request(url)
+            with direct_opener.open(req, timeout=(SINGBOX_TIMEOUT_MS / 1000.0) + 1.5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    delay = data.get("delay", 0)
+                    if delay > 0:
+                        raw = tag_to_raw[t]
+                        return (raw, delay)
+        except Exception:
+            pass
+        return None
+
+    try:
+        with ThreadPoolExecutor(max_workers=SINGBOX_CONCURRENCY) as executor:
+            futures = [executor.submit(query_delay, ob) for ob in outbounds]
+            for future in as_completed(futures):
+                res = future.result()
+                if res:
+                    alive_nodes.append(res)
+    finally:
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+        if os.path.exists(temp_cfg_path):
+            try: os.remove(temp_cfg_path)
+            except Exception: pass
+
+    return alive_nodes
+
+def run_singbox_deep_verify(candidate_lines: list) -> list:
+    """启动 sing-box 批量进行真实的 Cloudflare 204 网页请求深度测活与物理 IP 去重"""
+    sing_box_bin = shutil.which("sing-box") or "/usr/local/bin/sing-box"
+    if not (os.path.exists(sing_box_bin) or shutil.which(sing_box_bin)):
+        local_bin = os.path.join(BASE_DIR, "sing-box")
+        if os.path.exists(local_bin):
+            sing_box_bin = local_bin
+        else:
+            print("[!] 未检测到可用 sing-box 程序，跳过 204 网页深度测活，保留全量初筛列表。")
+            return candidate_lines
+
+    total = len(candidate_lines)
+    print(f"\n======================================================================")
+    print(f"[*] 启动 sing-box 真实 204 网页深度测活 (候选待测节点: {total} 个)")
+    print(f"[*] 测活目标: {SINGBOX_TEST_URL} | 并发: {SINGBOX_CONCURRENCY} | 超时: {SINGBOX_TIMEOUT_MS}ms")
+    print(f"======================================================================")
+
+    b_count = (total + SINGBOX_BATCH_SIZE - 1) // SINGBOX_BATCH_SIZE
+    all_alive = []
+    seen_ips = set()
+
+    for b in range(b_count):
+        start_idx = b * SINGBOX_BATCH_SIZE
+        end_idx = min(start_idx + SINGBOX_BATCH_SIZE, total)
+        batch = candidate_lines[start_idx:end_idx]
+
+        alive_batch = test_singbox_batch(batch, b, b_count, sing_box_bin)
+
+        for raw_line, delay in alive_batch:
+            phy_ip = get_node_physical_ip(raw_line)
+            if phy_ip and phy_ip in seen_ips:
+                continue
+            if phy_ip:
+                seen_ips.add(phy_ip)
+            all_alive.append((raw_line, delay))
+
+        if (b + 1) % 10 == 0 or b + 1 == b_count:
+            print(f"  [进度] 批次 [{b + 1}/{b_count}] 已完成，当前累计 204 深度存活节点: {len(all_alive)} 个")
+
+    all_alive.sort(key=lambda x: x[1])
+    final_lines = [item[0] for item in all_alive]
+
+    print(f"\n[+] sing-box 真实 204 网页深度测活圆满完成！")
+    print(f"    - 输入初筛节点: {total} 个")
+    print(f"    - 最终通过 204 网页测活且物理 IP 唯一节点: {len(final_lines)} 个")
+    return final_lines
+
+
 def process_and_validate_candidates(candidate_lines: list, concurrency=250, timeout=2.5):
 
     """云端初筛执行总装流水线"""
@@ -1970,21 +2351,20 @@ def process_and_validate_candidates(candidate_lines: list, concurrency=250, time
 
     # 镜像保存 valid_proxies.txt 保持兼容
 
-    save_split_files(VALID_OUTPUT_FILE, alive_lines, max_bytes=MAX_OUTPUT_BYTES)
+    # 步骤 5: sing-box 真实 204 网页深度测活
+    print("\n[*] 步骤 5/5: 启动 sing-box 执行 Cloudflare HTTP 204 网页深度测活...")
+    deep_verified_lines = run_singbox_deep_verify(alive_lines)
 
+    # 导出最终测活文件 valid_proxies.txt 与 final_valid_proxies.txt (可分卷)
+    save_split_files(VALID_OUTPUT_FILE, deep_verified_lines, max_bytes=MAX_OUTPUT_BYTES)
+    save_split_files(FINAL_OUTPUT_FILE, deep_verified_lines, max_bytes=MAX_OUTPUT_BYTES)
 
-
-    # 保存指纹
-
+    # 保存指纹库
     with open(SEEN_FILE, "w", encoding="utf-8") as sf:
+        for line in deep_verified_lines:
+            sf.write(hashlib.sha256(line.encode("utf-8")).hexdigest() + "\n")
 
-        for item in alive_results:
-
-            sf.write(hashlib.sha256(item["line"].encode("utf-8")).hexdigest() + "\n")
-
-
-
-    return alive_results
+    return deep_verified_lines
 
 
 
