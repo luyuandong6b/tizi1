@@ -56,6 +56,8 @@ import shutil
 
 import socket
 
+import subprocess
+
 import sys
 
 # 解决 Windows 控制台编码问题
@@ -84,7 +86,7 @@ import urllib.request
 
 import zipfile
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 
