@@ -550,6 +550,56 @@ CURATED_SUBSCRIPTIONS = [
         "desc": "全球高星经典聚合源",
 
     },
+    # ---- 纯国际海外精选活跃源 (欧美/全球反审查开源项目，非中文/非特供) ----
+    {
+        "name": "Argh94-Hy2",
+        "repo": "Argh94/Proxy-List",
+        "url": "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Hysteria2.txt",
+        "desc": "纯海外 Hysteria 2 专线 (每小时自动刷新)",
+    },
+    {
+        "name": "Argh94-All",
+        "repo": "Argh94/Proxy-List",
+        "url": "https://raw.githubusercontent.com/Argh94/Proxy-List/main/All_Config.txt",
+        "desc": "全协议海外底池 (每小时自动刷新)",
+    },
+    {
+        "name": "ALIILAPRO-Server",
+        "repo": "ALIILAPRO/v2rayNG-Config",
+        "url": "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt",
+        "desc": "国际高赞反审查明文池 (每日高频提交)",
+    },
+    {
+        "name": "ALIILAPRO-Sub",
+        "repo": "ALIILAPRO/v2rayNG-Config",
+        "url": "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt",
+        "desc": "国际高赞 Base64 聚合订阅池",
+    },
+    {
+        "name": "M450ud-PrList",
+        "repo": "M450ud/PrList",
+        "url": "https://raw.githubusercontent.com/M450ud/PrList/main/prx.txt",
+        "desc": "小众 sing-box 友好代理池 (极低滥用率)",
+    },
+    {
+        "name": "morpheusadam-Rapo",
+        "repo": "morpheusadam/v2ray-config",
+        "url": "https://raw.githubusercontent.com/morpheusadam/v2ray-config/main/rapo.txt",
+        "desc": "自动化日更实测活跃池",
+    },
+    {
+        "name": "jafarm83-Jafar",
+        "repo": "jafarm83/ConfigV2Ray",
+        "url": "https://raw.githubusercontent.com/jafarm83/ConfigV2Ray/main/jafar.txt",
+        "desc": "小众极低关注度海外精炼源",
+    },
+    {
+        "name": "jafarm83-Ultimate",
+        "repo": "jafarm83/ConfigV2Ray",
+        "url": "https://raw.githubusercontent.com/jafarm83/ConfigV2Ray/main/jafar_ultimate.txt",
+        "desc": "海外精选高速池",
+    },
+
 
 ]
 
