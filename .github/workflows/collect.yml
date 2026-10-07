@@ -2,8 +2,8 @@ name: Daily Collect & Deep Verify Proxies
 
 on:
   schedule:
-    # 每天北京时间 19:10 (UTC 10:00) 自动定时执行
-    - cron: '10 11 * * *'
+    # 每天北京时间 18:00 (UTC 10:00) 自动定时执行
+    - cron: '0 10 * * *'
   workflow_dispatch:
 
 jobs:
@@ -43,5 +43,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add all_proxies*.txt seen_hashes.txt valid_proxies*.txt final_valid_proxies*.txt
-          git diff --cached --quiet || git commit -m "chore: daily 19:10 collect and 204 deep-verified proxies [skip ci]"
+          git diff --cached --quiet || git commit -m "chore: daily 18:00 collect and 204 deep-verified proxies [skip ci]"
           git push origin main
