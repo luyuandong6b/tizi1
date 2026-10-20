@@ -1,9 +1,7 @@
-name: Daily Collect & Deep Verify Proxies
+name: Manual Collect & Deep Verify Proxies
 
 on:
-  schedule:
-    # 每天北京时间 18:00 (UTC 10:00) 自动定时执行
-    - cron: '0 10 * * *'
+  # 定时调度已取消，仅支持手动或外部指令触发
   workflow_dispatch:
 
 jobs:
